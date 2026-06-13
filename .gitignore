@@ -1,0 +1,22 @@
+# Environment variables and API keys
+.env
+
+# Local SQLite databases
+memory.db
+*.db
+*.sqlite
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python caching
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+Thumbs.db
