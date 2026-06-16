@@ -5,17 +5,37 @@
 memory.db
 *.db
 *.sqlite
+*.sqlite3
 
 # Virtual environment
 .venv/
 venv/
 ENV/
+env/
 
-# Python caching
+# Python caching & build files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+
+# IDE configs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Log files
+*.log
 
 # OS files
 .DS_Store
