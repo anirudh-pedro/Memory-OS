@@ -126,7 +126,7 @@ class MemoryAgentBuilder:
                 action_desc = action_mapping.get(pending["tool_name"], pending["tool_name"])
                 ai_msg = AIMessage(
                     content=(
-                        f"⚠️ There is a pending action:\n"
+                        f"There is a pending action:\n"
                         f"Proposed Action:\n"
                         f"{action_desc}\n\n"
                         f"Please reply with 'yes' to proceed, or 'no' to cancel."
@@ -210,6 +210,7 @@ class MemoryAgentBuilder:
             "retrieved_context": retrieved_context
         })
         
+        
         # Intercept state-changing tool calls
         STATE_CHANGING_TOOLS = {
             "github_create_an_issue", "GITHUB_CREATE_AN_ISSUE",
@@ -268,6 +269,7 @@ class MemoryAgentBuilder:
                 "args": target_tool_call["args"],
                 "id": target_tool_call["id"]
             }
+
             logger.info(f"Intercepted state-changing tool call '{target_tool_call['name']}'. Proposing action to user.")
             return {
                 "messages": [prop_msg],

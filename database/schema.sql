@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL, -- Person, Project, Skill, Task, Event, Email, Repository, Document
     name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    aliases_json TEXT DEFAULT '[]',
     properties_json TEXT DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
