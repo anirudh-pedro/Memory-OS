@@ -28,6 +28,19 @@ Memory-OS is a CLI-based **Personal Knowledge Operating System (PKOS)**. It sync
 
 ---
 
+## 📚 Documentation
+
+The complete documentation for Memory-OS is located in the [`docs/`](docs/) directory.
+
+*   **[Architecture & Design](docs/architecture/overview.md)**
+*   **[Core Features](docs/features/core-features.md)**
+*   **[CLI Usage](docs/cli/usage.md)**
+*   **[Development Guide](docs/development/conventions.md)**
+
+For a high-level overview of the codebase and technical debt audit, see the [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md).
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Install Dependencies
@@ -55,38 +68,3 @@ uv run main.py
 
 On first run, the CLI will guide you through OAuth flows to connect your GitHub, Gmail, Notion, and Google Calendar accounts.
 
----
-
-## 🏗️ Architecture
-
-```
-GitHub, Gmail, Notion, Calendar
-           ↓
-    Composio Connectors
-           ↓
-      Sync Pipeline (core/pipeline.py)
-     /      |      \
-    v       v       v
-SQLite    Qdrant   LLM Extractor (core/extractor.py)
-(Cache)  (Vectors)   ↓
-                     Entity Validation & Resolution (memory/quality.py)
-                     ↓
-                   SQLite (metadata.db) & Neo4j
-                     (Clean Entities & Relationships)
-```
-
-### Key Modules
-| Module | Purpose |
-| :--- | :--- |
-| `main.py` | CLI entry point and orchestrator |
-| `core/pipeline.py` | Ingestion pipeline: cache → vectors → graph extraction |
-| `core/extractor.py` | LLM-powered entity/relationship extraction with JSON repair |
-| `core/embeddings.py` | TF-IDF embedder with vocabulary persistence |
-| `core/vector_store.py` | Qdrant vector store wrapper |
-| `core/graph_store.py` | SQLite and Neo4j graph store implementations |
-| `core/db.py` | SQLite connection manager and schema migrations |
-| `retrieval/searcher.py` | Hybrid search: vector + FTS + graph neighbor fusion |
-| `memory/quality.py` | Entity validation, technology classification, project detection |
-| `memory/events.py` | Event sourcing logger |
-| `connectors/` | GitHub, Gmail, Notion, Calendar data fetchers |
-| `ontology/` | Entity type and relationship type enums |
