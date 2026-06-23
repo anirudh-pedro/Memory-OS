@@ -1,17 +1,6 @@
 -- Enable foreign key support
 PRAGMA foreign_keys = ON;
 
--- Conversational Messages Table
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    thread_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    metadata_json TEXT DEFAULT '{}',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
-
 -- Entities Table
 CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,9 +34,27 @@ CREATE TABLE IF NOT EXISTS workspace_cache (
     content TEXT DEFAULT '',
     metadata_json TEXT DEFAULT '{}',
     last_synced TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    importance_score INTEGER DEFAULT 1,
+    importance_reason TEXT DEFAULT '',
     UNIQUE(source_app, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_workspace_cache_app_ext ON workspace_cache(source_app, external_id);
+
+-- Event Sourcing Table
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    entity_name TEXT,
+    payload_json TEXT DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Sync Metadata Table
+CREATE TABLE IF NOT EXISTS sync_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- FTS5 Full-Text Search Virtual Tables for Workspace Cache and Entities
 CREATE VIRTUAL TABLE IF NOT EXISTS workspace_cache_fts USING fts5(

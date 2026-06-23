@@ -8,15 +8,15 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.db import DatabaseConnectionManager
-from core.embeddings import LocalTFIDFEmbedder
+from core.embeddings import get_embedder
 from core.vector_store import QdrantVectorStore
 from core.models import MemoryChunk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("reindex_script")
 
-def run_migration_and_reindex(vector_store=None):
-    db_path = "memory.db"
+def run_migration_and_reindex(vector_store=None, embedder=None, refit=True):
+    db_path = "metadata.db"
     db_manager = DatabaseConnectionManager(db_path=db_path)
     
     conn = db_manager.get_connection()
@@ -76,9 +76,14 @@ def run_migration_and_reindex(vector_store=None):
         logger.info("No documents found to index.")
         return
 
-    logger.info(f"Fitting TF-IDF embedder on {len(documents)} documents...")
-    embedder = LocalTFIDFEmbedder()
-    embedder.fit(documents)
+    if embedder is None:
+        embedder = get_embedder()
+
+    if refit:
+        logger.info(f"Fitting embedder on {len(documents)} documents...")
+        embedder.fit(documents)
+    else:
+        logger.info("Reusing existing embedder vocabulary (refit=False).")
     
     dimension = len(embedder.vocabulary)
     if dimension == 0:
@@ -87,7 +92,7 @@ def run_migration_and_reindex(vector_store=None):
     logger.info(f"Initializing Qdrant collection with dimension: {dimension}")
     if vector_store is None:
         vector_store = QdrantVectorStore()
-    vector_store.initialize_collection(dimension=dimension, force_recreate=True)
+    vector_store.initialize_collection(dimension=dimension, force_recreate=True, embedder=embedder)
     
     logger.info("Computing embeddings and preparing chunks...")
     vectors = embedder.embed_documents(documents)

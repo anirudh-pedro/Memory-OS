@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DatabaseConnectionManager:
-    def __init__(self, db_path: str = "memory.db", schema_path: str = "database/schema.sql"):
+    def __init__(self, db_path: str = "metadata.db", schema_path: str = "database/schema.sql"):
         self.db_path = db_path
         self.schema_path = schema_path
         self.initialize_db()
@@ -38,6 +38,33 @@ class DatabaseConnectionManager:
                     cursor.execute("ALTER TABLE entities ADD COLUMN aliases_json TEXT DEFAULT '[]';")
                     conn.commit()
                     logger.info("Migrating entities table aliases_json complete.")
+
+            # Check if workspace_cache table needs importance columns
+            cursor.execute("PRAGMA table_info(workspace_cache);")
+            cache_cols = [c[1] for c in cursor.fetchall()]
+            if cache_cols:
+                if "importance_score" not in cache_cols:
+                    logger.info("Migrating workspace_cache table to add 'importance_score' column...")
+                    cursor.execute("ALTER TABLE workspace_cache ADD COLUMN importance_score INTEGER DEFAULT 1;")
+                    conn.commit()
+                if "importance_reason" not in cache_cols:
+                    logger.info("Migrating workspace_cache table to add 'importance_reason' column...")
+                    cursor.execute("ALTER TABLE workspace_cache ADD COLUMN importance_reason TEXT DEFAULT '';")
+                    conn.commit()
+
+            # Ensure events table exists
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    entity_name TEXT,
+                    payload_json TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            conn.commit()
         except sqlite3.Error as e:
             logger.warning(f"Pre-migration check failed: {e}")
 

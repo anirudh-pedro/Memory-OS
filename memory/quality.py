@@ -7,6 +7,8 @@ from core.models import Entity, Relationship
 from core.graph_store import BaseGraphStore
 from core.db import DatabaseConnectionManager
 from pydantic import BaseModel, Field
+from ontology.entity_types import EntityType
+from ontology.relationship_types import RelationshipType
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +220,15 @@ class EntityValidator:
             
         name_lower = name.lower()
         
+        # 1.5. Reject blacklisted conversational entities
+        BLACKLISTED_ENTITIES = {
+            "assistant", "user", "response", "query", "me", "you", "system", "ai", "model", 
+            "agent", "bot", "messages", "chat", "history", "message", "conversation", "greeting",
+            "llm", "prompt", "context", "metadata", "properties", "result", "thanks", "hello", "hi"
+        }
+        if name_lower in BLACKLISTED_ENTITIES:
+            return False
+        
         # 1. Reject bracket placeholders (<unknown_repository>, <owner>/<repo>)
         if name.startswith("<") or name.endswith(">"):
             return False
@@ -267,15 +278,15 @@ class EntityResolver:
             # Overrides for technology / repository format
             tech_canonical = TechnologyClassifier.classify(entity.name)
             if tech_canonical:
-                entity.entity_type = "Technology"
+                entity.entity_type = EntityType.TECHNOLOGY
                 entity.name = tech_canonical
 
-            if entity.entity_type == "Repository":
+            if entity.entity_type == EntityType.REPOSITORY:
                 entity.name = entity.name.strip().lower()
                 entity.aliases = [a.strip().lower() for a in entity.aliases]
 
-            # Match existing entities of same type
-            cursor.execute("SELECT id, name, description, aliases_json, properties_json FROM entities WHERE entity_type = ?", (entity.entity_type,))
+            # Match existing entities across all types to enforce one canonical type
+            cursor.execute("SELECT id, name, entity_type, description, aliases_json, properties_json FROM entities")
             rows = cursor.fetchall()
             
             matched_row = None
@@ -291,25 +302,28 @@ class EntityResolver:
                     matched_row = row
                     break
 
-            # If Repository and not matched yet, check flat-vs-full path relationships
-            if not matched_row and entity.entity_type == "Repository":
-                if "/" not in entity.name:
-                    for row in rows:
-                        row_name = row['name']
-                        if "/" in row_name and row_name.lower().endswith(f"/{entity.name.lower()}"):
-                            matched_row = row
-                            break
-                else:
-                    flat_name = entity.name.split("/")[-1]
-                    for row in rows:
-                        row_name = row['name']
-                        if "/" not in row_name and row_name.lower() == flat_name.lower():
-                            matched_row = row
-                            break
+            # If Repository check is needed
+            if not matched_row:
+                repo_rows = [r for r in rows if r['entity_type'] == "Repository"]
+                if entity.entity_type == EntityType.REPOSITORY:
+                    if "/" not in entity.name:
+                        for row in repo_rows:
+                            row_name = row['name']
+                            if "/" in row_name and row_name.lower().endswith(f"/{entity.name.lower()}"):
+                                matched_row = row
+                                break
+                    else:
+                        flat_name = entity.name.split("/")[-1]
+                        for row in repo_rows:
+                            row_name = row['name']
+                            if "/" not in row_name and row_name.lower() == flat_name.lower():
+                                matched_row = row
+                                break
             
             if matched_row:
                 node_id = matched_row['id']
                 existing_name = matched_row['name']
+                entity.entity_type = matched_row['entity_type']  # Enforce canonical type!
                 existing_aliases = json.loads(matched_row['aliases_json'] or "[]")
                 existing_props = json.loads(matched_row['properties_json'] or "{}")
                 
@@ -323,7 +337,7 @@ class EntityResolver:
                 
                 # Canonical name resolution:
                 final_name = existing_name
-                if entity.entity_type == "Repository":
+                if entity.entity_type == EntityType.REPOSITORY:
                     # Force lowercase format
                     final_name = final_name.lower()
                     if "/" in entity.name and "/" not in existing_name:
@@ -454,11 +468,11 @@ class MemoryQualityPipeline:
         # 1. Technology check
         tech_canonical = TechnologyClassifier.classify(entity.name)
         if tech_canonical:
-            entity.entity_type = "Technology"
+            entity.entity_type = EntityType.TECHNOLOGY
             entity.name = tech_canonical
 
         # 2. Project check
-        if entity.entity_type == "Project":
+        if entity.entity_type == EntityType.PROJECT:
             if not self.project_classifier.is_valid_project(entity.name, entity.description or "", source):
                 logger.info(f"Discarding invalid project entity: '{entity.name}'")
                 return -1

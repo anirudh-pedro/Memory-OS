@@ -2,26 +2,21 @@ import os
 import sys
 import argparse
 import logging
-from dotenv import load_dotenv
-from fastapi import FastAPI
-import uvicorn
+import re
 import sqlite3
 import json
 from datetime import datetime
+from dotenv import load_dotenv
 
 # Core Modules & Pipeline
 from core.db import DatabaseConnectionManager
-from core.embeddings import LocalTFIDFEmbedder
+from core.embeddings import get_embedder
 from core.vector_store import QdrantVectorStore
 from core.graph_store import SQLiteGraphStore, Neo4jGraphStore
 from core.extractor import GraphRAGExtractor
 from core.pipeline import IngestionPipeline
 from core.models import Memory
-
-# Retrieval & Assistant
-from retrieval.search import HybridSearcher
-from assistant.agent import PersonalAssistantBuilder
-from api.routes import create_router
+from retrieval.searcher import HybridSearcher
 
 # Connectors
 from connectors.github import GitHubConnector
@@ -33,7 +28,6 @@ from connectors.calendar import CalendarConnector
 from composio import Composio, SESSION_PRESET_DIRECT_TOOLS
 from composio_langchain import LangchainProvider
 from langchain_groq import ChatGroq
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -44,12 +38,19 @@ load_dotenv()
 # Force standard output to UTF-8 to handle Unicode characters smoothly on Windows
 sys.stdout.reconfigure(encoding='utf-8')
 
-db_path = "memory.db"
+db_path = "metadata.db"
 
 # 1. Initialize core system storage & embeddings
 db_manager = DatabaseConnectionManager(db_path=db_path)
 vector_store = QdrantVectorStore()
-embedder = LocalTFIDFEmbedder()
+embedder = get_embedder()
+
+print("="*40)
+print(f"Embedder Loaded: {embedder.__class__.__name__}")
+print(f"Vocabulary Size: {len(embedder.vocabulary)}")
+print(f"Dimension: {getattr(embedder, 'dimension', len(embedder.vocabulary))}")
+print(f"Model Version: {getattr(embedder, 'version', 'N/A')}")
+print("="*40)
 
 # Dynamic Graph DB auto-switching based on env variables
 neo4j_uri = os.getenv("NEO4J_URI")
@@ -62,68 +63,91 @@ else:
     logger.info("Connecting to local SQLite Graph Store...")
     graph_store = SQLiteGraphStore(db_path)
 
-# Initialize Search, Extractor, Pipeline
+# Initialize Search, Extractor
 searcher = HybridSearcher(db_manager, vector_store, embedder, graph_store)
-pipeline = IngestionPipeline(db_manager, vector_store, embedder, graph_store=graph_store)
 
-# Fit embedder on launch using existing db cache to keep queries operational
+# Startup check for Qdrant Collection verification, metadata matching, and auto-recovery
 try:
-    conn = db_manager.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, content FROM workspace_cache")
-    cache_rows = cursor.fetchall()
-    cursor.execute("SELECT name, entity_type, description, properties_json FROM entities")
-    entity_rows = cursor.fetchall()
-    conn.close()
-    
-    existing_docs = []
-    for row in cache_rows:
-        title = row["title"] or ""
-        content = row["content"] or ""
-        existing_docs.append(f"{title} {content}")
-        
-    for row in entity_rows:
-        name = row["name"] or ""
-        entity_type = row["entity_type"] or ""
-        desc = row["description"] or ""
-        props = row["properties_json"] or "{}"
-        existing_docs.append(f"{name} {entity_type} {desc} {props}")
-        
-    if existing_docs:
-        embedder.fit(existing_docs)
-        
-    # Startup check for Qdrant Collection verification & loading
-    dimension = len(embedder.vocabulary)
+    dimension = getattr(embedder, "dimension", len(embedder.vocabulary))
     if dimension > 0:
-        if not vector_store.collection_exists():
-            logger.info("Qdrant collection 'memory_os' does not exist on launch. Initializing collection and performing auto-reindexing...")
-            from scripts.reindex_all import run_migration_and_reindex
-            run_migration_and_reindex(vector_store=vector_store)
+        exists = vector_store.collection_exists()
+        mismatch = False
+        mismatch_reason = ""
+        
+        # 1. Load persisted collection metadata
+        meta = vector_store.load_metadata()
+        if not exists:
+            mismatch = True
+            mismatch_reason = "Collection does not exist"
         else:
+            # Check actual collection dimension
             try:
                 info = vector_store.client.get_collection(vector_store.collection_name)
                 current_dim = info.config.params.vectors.size
                 if current_dim != dimension:
-                    logger.info(f"Qdrant collection 'memory_os' dimension mismatch ({current_dim} vs {dimension}). Reinitializing and reindexing...")
-                    from scripts.reindex_all import run_migration_and_reindex
-                    run_migration_and_reindex(vector_store=vector_store)
-                else:
-                    logger.info("Qdrant collection 'memory_os' exists with correct dimension. Loaded successfully.")
+                    mismatch = True
+                    mismatch_reason = f"Actual collection dimension mismatch ({current_dim} vs {dimension})"
             except Exception as ex:
-                logger.warning(f"Error checking startup collection info: {ex}. Reindexing...")
+                mismatch = True
+                mismatch_reason = f"Failed to retrieve collection info: {ex}"
+                
+            # Compare persisted metadata dimension
+            if not mismatch and meta:
+                meta_dim = meta.get("dimension")
+                if meta_dim != dimension:
+                    mismatch = True
+                    mismatch_reason = f"Metadata dimension mismatch ({meta_dim} vs {dimension})"
+
+        if mismatch:
+            logger.warning(f"Qdrant collection verification failed: {mismatch_reason}. Triggering automatic recovery...")
+            try:
+                if exists:
+                    try:
+                        vector_store.client.delete_collection(vector_store.collection_name)
+                        logger.info(f"Deleted outdated collection '{vector_store.collection_name}'.")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete collection during recovery: {e}")
+                
+                vector_store.initialize_collection(dimension=dimension, force_recreate=True, embedder=embedder)
+                
+                # Reindex all cached entries and upload vectors using currently loaded embedder without refitting
                 from scripts.reindex_all import run_migration_and_reindex
-                run_migration_and_reindex(vector_store=vector_store)
+                run_migration_and_reindex(vector_store=vector_store, embedder=embedder, refit=False)
+                
+                embedder_type = os.getenv("EMBEDDER_TYPE", "tfidf").lower()
+                version = getattr(embedder, "version", f"{embedder_type}_{dimension}")
+                vector_store.save_metadata(embedder_type, dimension, version)
+                
+                logger.info("Automatic vector store recovery completed successfully!")
+            except Exception as recovery_err:
+                logger.error(f"Automatic recovery failed: {recovery_err}")
+                raise recovery_err
+        else:
+            logger.info("Qdrant collection exists and dimensions are verified. Loaded successfully.")
+    else:
+        logger.info("Embedder vocabulary is empty on launch. Dimension check deferred until fit is performed.")
 except Exception as e:
-    logger.warning(f"Could not perform baseline embedding fit or startup Qdrant collection check: {e}")
+    logger.error("="*80)
+    logger.error("🚨 WARNING: Persistent vector store initialization or recovery failed! 🚨")
+    logger.error(f"Reason: {e}")
+    logger.error("Vector retrieval mode is now DISABLED. The assistant will fallback to Graph & Full-Text Search (FTS).")
+    logger.error("To resolve this issue manually, please ensure Qdrant is running and run the migration script:")
+    logger.error("    uv run python scripts/reindex_all.py")
+    logger.error("="*80)
+    vector_store.vector_retrieval_enabled = False
 
 # 2. LLM Setup
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    api_key=os.getenv("GROQ_API_KEY")
+    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.0
 )
 
 # GraphRAG Extractor
 extractor = GraphRAGExtractor(llm, graph_store)
+
+# Ingestion Pipeline
+pipeline = IngestionPipeline(db_manager, vector_store, embedder, graph_store=graph_store, extractor=extractor)
 
 # 3. Composio Session & Toolkits Setup
 composio = Composio(provider=LangchainProvider())
@@ -174,13 +198,27 @@ tools = session.tools()
 # Dynamic patch function for optional schema parameters that default to None
 def patch_tool_schemas(tools_list):
     import typing
-    from pydantic import create_model
+    from pydantic import create_model, BaseModel
+    
+    def simplify_type(annotation):
+        if annotation is None:
+            return None
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return dict
+        origin = typing.get_origin(annotation)
+        args = typing.get_args(annotation)
+        if origin is not None and args:
+            has_model = False
+            for a in args:
+                if isinstance(a, type) and issubclass(a, BaseModel):
+                    has_model = True
+                elif typing.get_origin(a) is not None:
+                    has_model = True
+            if has_model:
+                return dict
+        return annotation
+
     for t in tools_list:
-        # Prune tool description
-        if t.description:
-            first_sentence = t.description.split(".")[0].split(" - ")[0]
-            t.description = first_sentence[:100].strip()
-            
         if t.args_schema is None:
             continue
         patched_fields = {}
@@ -188,10 +226,8 @@ def patch_tool_schemas(tools_list):
             annotation = field.annotation
             default = field.default
             
-            # Prune field description to reduce token count
-            if hasattr(field, "description") and field.description:
-                field.description = field.description.split(".")[0][:50].strip()
-                
+            annotation = simplify_type(annotation)
+            
             if default is None:
                 args = typing.get_args(annotation)
                 if type(None) not in args:
@@ -200,54 +236,196 @@ def patch_tool_schemas(tools_list):
                     else:
                         annotation = typing.Optional[annotation]
             patched_fields[name] = (annotation, default)
+        
         t.args_schema = create_model(t.args_schema.__name__, **patched_fields)
 
 patch_tool_schemas(tools)
 
-# 4. Agent Graph Compilation
-with SqliteSaver.from_conn_string(db_path) as checkpointer:
-    agent_builder = PersonalAssistantBuilder(
-        llm=llm,
-        tools=tools,
-        graph_store=graph_store,
-        searcher=searcher,
-        extractor=extractor,
-        db_path=db_path
-    )
-    agent_graph = agent_builder.build_graph()
-
-# 5. FastAPI Instance Setup
-app = FastAPI(title="Memory-OS API", description="Personal AI Memory OS Backend.")
-router = create_router(
-    agent_graph=agent_graph,
-    session=session,
-    db_manager=db_manager,
-    vector_store=vector_store,
-    embedder=embedder,
-    graph_store=graph_store,
-    pipeline=pipeline,
-    llm=llm
-)
-app.include_router(router)
-
-
-# 6. Connection Validation
 def ensure_connections():
-    toolkits_to_check = ["github", "googlecalendar", "notion", "gmail"]
+    """Ensure required external auth connections are valid."""
     toolkits_info = session.toolkits()
-    for tk_slug in toolkits_to_check:
+    for tk_slug in ["github", "gmail", "notion", "googlecalendar"]:
         tk = next((t for t in toolkits_info.items if t.slug == tk_slug), None)
         if not tk or not (tk.connection and tk.connection.is_active):
-            print(f"[{tk_slug.upper()}] connection is not active. Initiating authorization...")
-            connection_req = session.authorize(tk_slug)
-            print(f"\n[ACTION REQUIRED] Please authorize Composio to access your {tk_slug} account by visiting this URL:")
-            print(f"--> {connection_req.redirect_url}\n")
-            print("Waiting for you to complete authorization in your browser...")
+            print(f"\n[{tk_slug.upper()}] connection is not active.")
+            print(f"Initiating authentication flow for {tk_slug}...")
+            connection_req = session.initiate_connection(toolkit_slug=tk_slug)
+            print(f"Please open this URL in your browser to complete login:\n{connection_req.redirect_url}\n")
             connection_req.wait_for_connection()
             print(f"[{tk_slug.upper()}] connection established successfully!\n")
         else:
             print(f"[{tk_slug.upper()}] connection is active.")
 
+def update_sync_metadata(db_manager, stats_dict):
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO sync_metadata (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+            ("last_sync_time", datetime.now().isoformat())
+        )
+        cursor.execute(
+            "INSERT INTO sync_metadata (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+            ("last_sync_stats", json.dumps(stats_dict))
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Failed to update sync metadata: {e}")
+    finally:
+        conn.close()
+
+def show_stats(db_manager, vector_store, graph_store):
+    print("\n" + "="*45)
+    print("🧠 PKOS KNOWLEDGE METRICS & DIAGNOSTICS 🧠")
+    print("="*45)
+    
+    # 1. SQLite stats
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM workspace_cache")
+        total_cache = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type")
+        entity_types = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        cursor.execute("SELECT COUNT(*) FROM relationships")
+        total_rels = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM events")
+        total_events = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT value FROM sync_metadata WHERE key = 'last_sync_time'")
+        row = cursor.fetchone()
+        last_sync = row[0] if row else "Never"
+    except sqlite3.Error as e:
+        logger.error(f"Failed to fetch SQLite stats: {e}")
+        total_cache = 0
+        entity_types = {}
+        total_rels = 0
+        total_events = 0
+        last_sync = "Unknown"
+    finally:
+        conn.close()
+        
+    print(f"Last Synchronization: {last_sync}")
+    print(f"Total Cached Documents: {total_cache}")
+    print(f"Total Logged Events: {total_events}")
+    print("\nKnowledge Graph (SQLite relational representation):")
+    print(f"  • Total Entities: {sum(entity_types.values())}")
+    for etype, count in sorted(entity_types.items()):
+        print(f"    - {etype}: {count}")
+    print(f"  • Total Relationships: {total_rels}")
+    
+    # 2. Qdrant stats
+    if getattr(vector_store, "vector_retrieval_enabled", True) and vector_store.collection_exists():
+        try:
+            info = vector_store.client.get_collection(vector_store.collection_name)
+            vector_count = info.points_count
+        except Exception:
+            vector_count = "Error"
+    else:
+        vector_count = "Disabled"
+    print(f"\nVector DB (Qdrant similarity representation):")
+    print(f"  • Total Vectors: {vector_count}")
+    
+    # 3. Neo4j stats (if enabled)
+    if isinstance(graph_store, Neo4jGraphStore):
+        try:
+            nodes = graph_store.get_all_nodes()
+            rels = graph_store.get_all_relationships()
+            neo4j_nodes_count = len(nodes)
+            neo4j_rels_count = len(rels)
+        except Exception:
+            neo4j_nodes_count = "Error"
+            neo4j_rels_count = "Error"
+        print(f"\nExternal Graph (Neo4j native representation):")
+        print(f"  • Total Nodes: {neo4j_nodes_count}")
+        print(f"  • Total Edges: {neo4j_rels_count}")
+        
+    print("="*45 + "\n")
+
+def handle_delete(date_str: str, db_manager, vector_store, graph_store):
+    print(f"Pruning memories and graph elements synced before '{date_str}'...")
+    
+    # 1. SQLite database
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    deleted_cache = 0
+    deleted_events = 0
+    try:
+        # Delete workspace cache
+        cursor.execute("DELETE FROM workspace_cache WHERE last_synced < ?", (date_str,))
+        deleted_cache = cursor.rowcount
+        
+        # Delete event sourcing events
+        cursor.execute("DELETE FROM events WHERE created_at < ?", (date_str,))
+        deleted_events = cursor.rowcount
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Failed to delete SQLite data: {e}")
+    finally:
+        conn.close()
+
+    # 2. SQLite / Neo4j Graph Store
+    graph_deleted = graph_store.delete_before(date_str)
+    
+    # 3. Qdrant Vector Store
+    vector_deleted = vector_store.delete_before(date_str)
+    
+    print("Pruning completed:")
+    print(f"  • Removed {deleted_cache} records from SQLite cache")
+    print(f"  • Removed {deleted_events} event logs")
+    print(f"  • Graph Store cleanup: {'Success' if graph_deleted else 'Failed'}")
+    print(f"  • Vector Store cleanup: {'Success' if vector_deleted else 'Failed'}")
+
+def query_answering(query: str, searcher: HybridSearcher, llm: ChatGroq):
+    results = searcher.search_hybrid(query, limit=5)
+    
+    # Format graph context
+    graph_context = ""
+    entities = results.get("graph", {}).get("entities", [])
+    relationships = results.get("graph", {}).get("relationships", [])
+    
+    if entities:
+        graph_context += "Matched Entities:\n"
+        for ent in entities:
+            graph_context += f"- {ent['name']} ({ent['entity_type']}): {ent['description'] or 'No description'}\n"
+    if relationships:
+        graph_context += "\nMatched Relationships:\n"
+        for rel in relationships:
+            graph_context += f"- {rel['source']} --[{rel['relation_type']}]--> {rel['target']}\n"
+            
+    # Format vector context
+    vector_context = ""
+    vectors = results.get("vector", [])
+    if vectors:
+        vector_context += "Semantic Context Chunks:\n"
+        for hit in vectors:
+            payload = hit.get("payload", {})
+            vector_context += f"- [{payload.get('source_app', 'Unknown')}] {payload.get('title', 'Untitled')}:\n  {payload.get('text', '')[:600]}\n"
+            
+    # Compile prompt
+    prompt = (
+        "You are Memory-OS, a high-performance Personal Knowledge Operating System.\n"
+        "Answer the user's query based on the following unified context retrieved from the vector store and the knowledge graph. "
+        "Be concise, clear, and direct. Do not assume or invent facts beyond what is in the context.\n\n"
+        "=== Unified Context ===\n"
+        f"{graph_context}\n"
+        f"{vector_context}\n"
+        "=======================\n\n"
+        f"User Query: {query}\n\n"
+        "Memory-OS Response:"
+    )
+    
+    print("\nThinking...")
+    try:
+        response = llm.invoke(prompt)
+        print(f"\nMemory-OS:\n{response.content}\n")
+    except Exception as e:
+        print(f"Failed to generate response: {e}")
 
 # 7. Interactive CLI Loop execution
 def run_cli():
@@ -260,342 +438,92 @@ def run_cli():
     print(f"Active Session ID: {thread_id}")
     print("="*50)
     print("Commands:")
-    print("  /clear                    - Clear current session chat history")
-    print("  /session <id>             - Switch to/create a different session")
-    print("  /sync                     - Run ingestion connector pipeline sync")
-    print("  /project <name>           - Render project dashboard context (Project Brain)")
-    print("  /timeline <start> <end>   - Render activity timeline logs")
-    print("  /explore <ent1> <ent2>    - Render path links between two entities")
-    print("  /graph                    - Render all graph nodes and edges")
-    print("  /graph-quality            - Render Knowledge Graph quality metrics (Avg Node Degree)")
-    print("  /debug-retrieval <query>  - Render retrieval diagnostic metrics (tokens, hits)")
-    print("  exit / quit               - Exit the chat")
+    print("  sync [--rebuild]          - Run ingestion connector pipeline sync")
+    print("  delete --before <date>    - Prune records and nodes older than YYYY-MM-DD")
+    print("  stats                     - Display database metrics and vector coverage")
+    print("  exit / quit               - Exit the shell")
     print("="*50)
 
     while True:
         try:
             user_input = input(f"\n[{thread_id}] You: ").strip()
-            if user_input.lower() in ["exit", "quit"]:
+            user_input_lower = user_input.lower()
+            
+            if user_input_lower in ["exit", "quit"]:
                 print("Goodbye!")
+                vector_store.close()
                 break
             
             if not user_input:
                 continue
             
-            # CLI Command: Clear chat history
-            if user_input.lower() == "/clear":
-                conn = db_manager.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-                cursor.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-                cursor.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
-                conn.commit()
-                conn.close()
-                print(f"Memory cleared for session '{thread_id}'.")
-                continue
-            
-            # CLI Command: Switch session
-            if user_input.startswith("/session "):
-                parts = user_input.split(" ", 1)
-                if len(parts) > 1 and parts[1].strip():
-                    thread_id = parts[1].strip()
-                    print(f"Switched to session '{thread_id}'.")
-                else:
-                    print("Invalid session ID.")
-                continue
-
             # CLI Command: Ingestion Pipeline Sync
-            if user_input.lower() == "/sync":
+            if user_input_lower.startswith("sync") or user_input_lower.startswith("/sync"):
+                parts = user_input_lower.split()
+                rebuild = "--rebuild" in parts
                 print("Running ingestion pipelines...")
                 memories = []
                 
-                # Fetch standard connectors
-                print("Syncing GitHub...")
-                memories.extend(GitHubConnector().sync(session))
-                print("Syncing Gmail...")
-                memories.extend(GmailConnector(llm=llm, graph_store=graph_store).sync(session))
-                print("Syncing Notion...")
-                memories.extend(NotionConnector().sync(session))
-                print("Syncing Calendar...")
-                memories.extend(CalendarConnector().sync(session))
+                try:
+                    print("Syncing GitHub...")
+                    memories.extend(GitHubConnector().sync(session))
+                except Exception as ex:
+                    logger.error(f"GitHub Sync failed: {ex}")
+                try:
+                    print("Syncing Gmail...")
+                    memories.extend(GmailConnector().sync(session))
+                except Exception as ex:
+                    logger.error(f"Gmail Sync failed: {ex}")
+                try:
+                    print("Syncing Notion...")
+                    memories.extend(NotionConnector().sync(session))
+                except Exception as ex:
+                    logger.error(f"Notion Sync failed: {ex}")
+                try:
+                    print("Syncing Calendar...")
+                    memories.extend(CalendarConnector().sync(session))
+                except Exception as ex:
+                    logger.error(f"Calendar Sync failed: {ex}")
                 
                 if memories:
-                    ingested = pipeline.run_ingestion(memories)
+                    ingested = pipeline.run_ingestion(memories, rebuild=rebuild)
                     print(f"Sync complete. Ingested {ingested} memory records into OS.")
+                    stats_dict = {
+                        "synced_at": datetime.now().isoformat(),
+                        "memories_synced": len(memories),
+                        "memories_ingested": ingested
+                    }
+                    update_sync_metadata(db_manager, stats_dict)
                 else:
                     print("Sync complete. No new memories found.")
                 continue
 
-            # CLI Command: Project Brain summary
-            if user_input.startswith("/project "):
-                parts = user_input.split(" ", 1)
-                if len(parts) > 1 and parts[1].strip():
-                    project_name = parts[1].strip()
-                    node = graph_store.get_node(project_name)
-                    if not node:
-                        print(f"Project '{project_name}' not found in Knowledge Graph.")
-                        continue
-                    
-                    relationships = graph_store.get_multi_hop_relationships(project_name, depth=2)
-                    
-                    # Fetch database matches
-                    conn = db_manager.get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT source_app, title, content, last_synced FROM workspace_cache WHERE title LIKE ? OR content LIKE ?",
-                        (f"%{project_name}%", f"%{project_name}%")
-                    )
-                    cache_rows = cursor.fetchall()
-                    conn.close()
-                    
-                    items = [
-                        {
-                            "source": r["source_app"],
-                            "title": r["title"],
-                            "content": r["content"],
-                            "timestamp": r["last_synced"]
-                        } for r in cache_rows
-                    ]
-                    
-                    print("\nSynthesizing Project Brain with LLM...")
-                    synthesis_prompt = (
-                        f"You are the project intelligence synthesizer of Memory-OS.\n"
-                        f"Compile a detailed, synthesized, and highly readable dashboard for the Project: '{project_name}'\n\n"
-                        f"Project Type: {node.entity_type}\n"
-                        f"Primary Description: {node.description}\n"
-                        f"Properties: {node.properties}\n\n"
-                        f"Knowledge Graph Connections:\n"
-                        f"{json.dumps(relationships, indent=2)}\n\n"
-                        f"Related Workspace Documents/Logs:\n"
-                        f"{json.dumps(items[:10], indent=2)}\n\n"
-                        f"Structure your response strictly under these headers:\n"
-                        f"1. Overview (A synthetic description of the project state and relevance)\n"
-                        f"2. Technologies Used (A structured list of frame/languages/vector DBs and links)\n"
-                        f"3. Recent Activity Timeline (Chronological timeline of commits, emails, updates)\n"
-                        f"4. Related Knowledge & Open Issues (Action items, decisions, discussions, or bugs)\n"
-                        f"5. Dependencies & Links (Other projects, people, or orgs connected to it)\n"
-                    )
-                    
-                    try:
-                        synthesis_resp = llm.invoke(synthesis_prompt)
-                        print(f"\n📊 === PROJECT BRAIN: {project_name.upper()} ===")
-                        print(synthesis_resp.content)
-                        print("="*50)
-                    except Exception as e:
-                        print(f"Failed to synthesize project brain: {e}")
+            # CLI Command: Delete before date
+            if "delete --before" in user_input_lower:
+                match = re.search(r"delete\s+--before\s+(\d{4}-\d{2}-\d{2})", user_input_lower)
+                if match:
+                    date_str = match.group(1)
+                    handle_delete(date_str, db_manager, vector_store, graph_store)
                 else:
-                    print("Invalid project name.")
+                    print("Invalid format. Use: delete --before YYYY-MM-DD")
                 continue
 
-            # CLI Command: Graph Quality metrics
-            if user_input.lower() in ["/quality", "/graph-quality"]:
-                conn = db_manager.get_connection()
-                cursor = conn.cursor()
-                
-                cursor.execute("SELECT COUNT(*) FROM entities")
-                total_nodes = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM relationships")
-                total_rels = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM entities WHERE entity_type = 'Project'")
-                project_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM entities WHERE entity_type = 'Person'")
-                people_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM entities WHERE entity_type = 'Technology'")
-                tech_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT name, entity_type FROM entities")
-                all_ents = cursor.fetchall()
-                
-                dup_candidates = []
-                seen = set()
-                for e1 in all_ents:
-                    n1 = e1["name"].lower()
-                    t1 = e1["entity_type"]
-                    for e2 in all_ents:
-                        n2 = e2["name"].lower()
-                        t2 = e2["entity_type"]
-                        if n1 != n2 and t1 == t2:
-                            pair = tuple(sorted([e1["name"], e2["name"]]))
-                            if pair not in seen:
-                                if n1 in n2 or n2 in n1:
-                                    dup_candidates.append(f"  • {e1['name']} <-> {e2['name']} ({t1})")
-                                    seen.add(pair)
-                                    
-                placeholders_pattern = ["unknown", "null", "none", "test", "untitled", "<unknown_repository>", "<owner>/<repo>"]
-                placeholders_found = [e["name"] for e in all_ents if any(p in e["name"].lower() for p in placeholders_pattern) or "<" in e["name"] or ">" in e["name"]]
-                
-                noise_found = [e["name"] for e in all_ents if e["name"].lower().startswith("create ") or e["name"].lower().startswith("run ") or "follow-up" in e["name"].lower() or "expected" in e["name"].lower()]
-                
-                conn.close()
-                
-                avg_node_degree = (total_rels / total_nodes) if total_nodes > 0 else 0.0
-                
-                print(f"\n📊 === KNOWLEDGE GRAPH QUALITY DASHBOARD ===")
-                print(f"Total Nodes: {total_nodes}")
-                print(f"Total Edges/Relations: {total_rels}")
-                print(f"Average Node Degree: {avg_node_degree:.2f}")
-                print(f"Projects Count: {project_count}")
-                print(f"People Count: {people_count}")
-                print(f"Technology Count: {tech_count}")
-                print(f"\nDuplicate Resolution Candidates ({len(dup_candidates)}):")
-                for c in dup_candidates:
-                    print(c)
-                print(f"\nPlaceholder Nodes Found ({len(placeholders_found)}):")
-                for p in placeholders_found:
-                    print(f"  • {p}")
-                print(f"\nConversational Noise Nodes ({len(noise_found)}):")
-                for n in noise_found:
-                    print(f"  • {n}")
-                print("="*50)
+            # CLI Command: Stats
+            if user_input_lower in ["stats", "/stats"]:
+                show_stats(db_manager, vector_store, graph_store)
                 continue
 
-            # CLI Command: Timeline log
-            if user_input.startswith("/timeline "):
-                parts = user_input.split(" ")
-                if len(parts) >= 3:
-                    start_date = parts[1]
-                    end_date = parts[2]
-                    
-                    conn = db_manager.get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT source_app, title, last_synced FROM workspace_cache WHERE last_synced BETWEEN ? AND ? ORDER BY last_synced ASC",
-                        (start_date, end_date)
-                    )
-                    rows = cursor.fetchall()
-                    conn.close()
-                    
-                    print(f"\n📅 === TIMELINE LOG: {start_date} to {end_date} ===")
-                    for r in rows:
-                        print(f"  - [{r['last_synced']}] [{r['source_app'].upper()}] {r['title']}")
-                    print("="*40)
-                else:
-                    print("Usage: /timeline YYYY-MM-DD YYYY-MM-DD")
-                continue
-
-            # CLI Command: Relationship Explorer
-            if user_input.startswith("/explore "):
-                parts = user_input.split(" ")
-                if len(parts) >= 3:
-                    src = parts[1]
-                    tgt = parts[2]
-                    
-                    src_node = graph_store.get_node(src)
-                    tgt_node = graph_store.get_node(tgt)
-                    
-                    if not src_node or not tgt_node:
-                        print("One or both entities not found in knowledge graph.")
-                        continue
-                        
-                    rels_src = graph_store.get_multi_hop_relationships(src, depth=2)
-                    path = []
-                    for r in rels_src:
-                        if (r["source"].lower() == src.lower() and r["target"].lower() == tgt.lower()) or \
-                           (r["source"].lower() == tgt.lower() and r["target"].lower() == src.lower()):
-                            path.append(r)
-                        elif r["target"].lower() == tgt.lower() or r["source"].lower() == tgt.lower():
-                            path.append(r)
-                            
-                    print(f"\n🔗 === RELATIONSHIP EXPLORATION: {src} ➔ {tgt} ===")
-                    if path:
-                        for p in path:
-                            print(f"  - ({p['source']}) -- {p['relation_type']} --> ({p['target']})")
-                    else:
-                        print("No direct 1 or 2-hop paths found connecting entities.")
-                    print("="*40)
-                else:
-                    print("Usage: /explore <entity1> <entity2>")
-                continue
-
-            # CLI Command: Render Graph
-            if user_input.lower() == "/graph":
-                nodes = graph_store.get_all_nodes()
-                edges = graph_store.get_all_relationships()
-                print("\n📊 --- KNOWLEDGE GRAPH STATUS --- 📊")
-                print(f"Nodes ({len(nodes)}):")
-                for n in nodes:
-                    desc_str = f" ({n.description})" if n.description else ""
-                    print(f"  • [{n.entity_type}] {n.name}{desc_str} (properties: {n.properties})")
-                print(f"Edges ({len(edges)}):")
-                for e in edges:
-                    print(f"  • ({e['source']}) -- {e['relation_type']} --> ({e['target']})")
-                print("=" * 40)
-                continue
-            
-            # CLI Command: Debug retrieval diagnostics
-            if user_input.startswith("/debug-retrieval "):
-                parts = user_input.split(" ", 1)
-                if len(parts) > 1 and parts[1].strip():
-                    query = parts[1].strip()
-                    fts_res = searcher.search_workspace_cache(query, limit=5)
-                    vector_res = searcher.search_vector_store(query, limit=5)
-                    graph_res = searcher.search_graph(query, limit=5)
-                    
-                    from retrieval.fusion import ReciprocalRankFusion
-                    from retrieval.context import ContextBuilder
-                    fusion = ReciprocalRankFusion()
-                    fused = fusion.fuse(fts_res, vector_res)
-                    context_builder = ContextBuilder(char_budget=10000)
-                    context = context_builder.build_context(fused, graph_res)
-                    
-                    token_count = len(context) // 4
-                    
-                    print(f"\n🔍 === RETRIEVAL DIAGNOSTICS: '{query}' ===")
-                    print(f"FTS Hits ({len(fts_res)}):")
-                    for r in fts_res:
-                        print(f"  - [{r['source_app'].upper()}] {r['title']}")
-                    print(f"\nVector Hits ({len(vector_res)}):")
-                    for r in vector_res:
-                        display_name = r['payload'].get('title') or r['payload'].get('name') or "Unnamed"
-                        print(f"  - {display_name} (score: {r['score']:.4f})")
-                    print(f"\nGraph Hits (Entities: {len(graph_res.get('entities', []))}, Relationships: {len(graph_res.get('relationships', []))}):")
-                    for ent in graph_res.get('entities', []):
-                        print(f"  - {ent['name']} ({ent['entity_type']})")
-                    for rel in graph_res.get('relationships', []):
-                        print(f"  - ({rel['source']}) -- {rel['relation_type']} --> ({rel['target']})")
-                    print(f"\nToken Count: {token_count}")
-                    print(f"Context Size (chars): {len(context)}")
-                    print("="*50)
-                else:
-                    print("Usage: /debug-retrieval <query>")
-                continue
-
-            # Send standard user query to LangGraph execution builder
-            config = {"configurable": {"thread_id": thread_id}}
-            inputs = {
-                "messages": [("user", user_input)],
-                "thread_id": thread_id
-            }
-            
-            print("\nThinking...")
-            with SqliteSaver.from_conn_string(db_path) as checkpointer:
-                response = agent_graph.invoke(inputs, config=config)
-                
-            messages = response.get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                print(f"\nMemory-OS:\n{last_msg.content}")
-            else:
-                print("\nMemory-OS: No response received.")
+            # Standard user queryanswering via Hybrid Search & ChatGroq
+            query_answering(user_input, searcher, llm)
                 
         except KeyboardInterrupt:
             print("\nGoodbye!")
+            vector_store.close()
             break
         except Exception as e:
             print(f"\nError: {e}")
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Memory-OS Engine Startup Option")
-    parser.add_argument("--server", "-s", action="store_true", help="Start the FastAPI REST web server")
-    args = parser.parse_args()
-
-    if args.server:
-        print("Starting FastAPI REST API server...")
-        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-    else:
-        run_cli()
+    parser = argparse.ArgumentParser(description="Memory-OS Engine CLI Engine")
+    args, unknown = parser.parse_known_args()
+    run_cli()

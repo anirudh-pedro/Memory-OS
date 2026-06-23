@@ -48,6 +48,11 @@ class BaseGraphStore(ABC):
         """Clear all nodes and relationships."""
         pass
 
+    @abstractmethod
+    def delete_before(self, date_str: str) -> bool:
+        """Delete entities synced before date_str."""
+        pass
+
 
 import re
 
@@ -82,7 +87,7 @@ def is_valid_entity(entity: Entity) -> bool:
 
 
 class SQLiteGraphStore(BaseGraphStore):
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str = "metadata.db"):
         self.db_path = db_path
         self._ensure_schema()
 
@@ -133,8 +138,8 @@ class SQLiteGraphStore(BaseGraphStore):
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            # Fetch all existing entities of same type to resolve alias matches
-            cursor.execute("SELECT id, name, description, aliases_json, properties_json FROM entities WHERE entity_type = ?", (entity.entity_type,))
+            # Fetch all existing entities across all types to resolve cross-type matches
+            cursor.execute("SELECT id, name, entity_type, description, aliases_json, properties_json FROM entities")
             rows = cursor.fetchall()
             
             matched_row = None
@@ -150,25 +155,28 @@ class SQLiteGraphStore(BaseGraphStore):
                     matched_row = row
                     break
 
-            # If Repository and not matched yet, check flat-vs-full path relationships
-            if not matched_row and entity.entity_type == "Repository":
-                if "/" not in entity.name:
-                    for row in rows:
-                        row_name = row['name']
-                        if "/" in row_name and row_name.lower().endswith(f"/{entity.name.lower()}"):
-                            matched_row = row
-                            break
-                else:
-                    flat_name = entity.name.split("/")[-1]
-                    for row in rows:
-                        row_name = row['name']
-                        if "/" not in row_name and row_name.lower() == flat_name.lower():
-                            matched_row = row
-                            break
+            # If Repository check is needed
+            if not matched_row:
+                repo_rows = [r for r in rows if r['entity_type'] == "Repository"]
+                if entity.entity_type == "Repository":
+                    if "/" not in entity.name:
+                        for row in repo_rows:
+                            row_name = row['name']
+                            if "/" in row_name and row_name.lower().endswith(f"/{entity.name.lower()}"):
+                                matched_row = row
+                                break
+                    else:
+                        flat_name = entity.name.split("/")[-1]
+                        for row in repo_rows:
+                            row_name = row['name']
+                            if "/" not in row_name and row_name.lower() == flat_name.lower():
+                                matched_row = row
+                                break
 
             if matched_row:
                 node_id = matched_row['id']
                 existing_name = matched_row['name']
+                entity.entity_type = matched_row['entity_type']  # Enforce one canonical type
                 existing_aliases = json.loads(matched_row['aliases_json'] or "[]")
                 existing_props = json.loads(matched_row['properties_json'] or "{}")
                 
@@ -202,6 +210,23 @@ class SQLiteGraphStore(BaseGraphStore):
                     (final_name, new_desc, json.dumps(existing_aliases), json.dumps(existing_props), node_id)
                 )
                 logger.info(f"Resolved entity '{entity.name}' to canonical node '{final_name}' and updated properties/aliases.")
+                
+                # Event Sourcing log for updates
+                try:
+                    from memory.events import EventStore, EventType
+                    event_store = EventStore(self.db_path)
+                    if entity.entity_type == "Project":
+                        if final_name.lower() != existing_name.lower():
+                            event_store.log_event(EventType.PROJECT_RENAMED, final_name, {"old_name": existing_name, "new_name": final_name})
+                        else:
+                            event_store.log_event(EventType.PROJECT_UPDATED, final_name, {"description": new_desc})
+                    elif entity.entity_type == "Task":
+                        old_status = existing_props.get("status", "pending")
+                        new_status = entity.properties.get("status", "pending")
+                        if new_status == "completed" and old_status != "completed":
+                            event_store.log_event(EventType.TASK_COMPLETED, final_name, {})
+                except Exception as ee:
+                    logger.warning(f"Failed to log update event: {ee}")
             else:
                 # No match, insert new node
                 aliases_to_save = entity.aliases.copy()
@@ -213,6 +238,21 @@ class SQLiteGraphStore(BaseGraphStore):
                 )
                 node_id = cursor.lastrowid
                 logger.info(f"Created new canonical node: '{entity.name}' ({entity.entity_type})")
+                
+                # Event Sourcing log for creations
+                try:
+                    from memory.events import EventStore, EventType
+                    event_store = EventStore(self.db_path)
+                    if entity.entity_type == "Project":
+                        event_store.log_event(EventType.PROJECT_CREATED, entity.name, {"description": entity.description})
+                    elif entity.entity_type == "Technology":
+                        event_store.log_event(EventType.TECH_ADDED, entity.name, {})
+                    elif entity.entity_type == "Repository":
+                        event_store.log_event(EventType.REPOSITORY_CREATED, entity.name, {})
+                    elif entity.entity_type == "Task":
+                        event_store.log_event(EventType.TASK_CREATED, entity.name, {"status": entity.properties.get("status", "pending")})
+                except Exception as ee:
+                    logger.warning(f"Failed to log creation event: {ee}")
             
             conn.commit()
             return node_id
@@ -400,6 +440,20 @@ class SQLiteGraphStore(BaseGraphStore):
         conn.commit()
         conn.close()
 
+    def delete_before(self, date_str: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            # Delete entities created before date_str. Cascade takes care of relationships.
+            cursor.execute("DELETE FROM entities WHERE datetime(created_at) < datetime(?)", (date_str,))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"Failed to delete entities from SQLite Graph Store: {e}")
+            return False
+        finally:
+            conn.close()
+
 
 class Neo4jGraphStore(BaseGraphStore):
     def __init__(self, uri: str, user: str = "neo4j", password: str = None):
@@ -414,26 +468,27 @@ class Neo4jGraphStore(BaseGraphStore):
     def add_node(self, entity: Entity) -> int:
         properties = entity.properties.copy()
         properties["description"] = entity.description or ""
+        last_synced = properties.get("last_synced", datetime.now().isoformat())
         properties_json = json.dumps(properties)
         query = (
             "MERGE (e:Entity {name: $name}) "
-            "ON CREATE SET e.entity_type = $entity_type, e.properties = $properties_json "
-            "ON MATCH SET e.properties = apoc.map.merge(coalesce(e.properties, '{}'), $properties_json) "
+            "ON CREATE SET e.entity_type = $entity_type, e.properties = $properties_json, e.last_synced = $last_synced "
+            "ON MATCH SET e.properties = apoc.map.merge(coalesce(e.properties, '{}'), $properties_json), e.last_synced = $last_synced "
             "RETURN id(e) AS id"
         )
         fallback_query = (
             "MERGE (e:Entity {name: $name}) "
-            "ON CREATE SET e.entity_type = $entity_type, e.properties = $properties_json "
-            "ON MATCH SET e.properties = $properties_json "
+            "ON CREATE SET e.entity_type = $entity_type, e.properties = $properties_json, e.last_synced = $last_synced "
+            "ON MATCH SET e.properties = $properties_json, e.last_synced = $last_synced "
             "RETURN id(e) AS id"
         )
         with self.driver.session() as session:
             try:
-                res = session.run(query, name=entity.name, entity_type=entity.entity_type, properties_json=properties_json)
+                res = session.run(query, name=entity.name, entity_type=entity.entity_type, properties_json=properties_json, last_synced=last_synced)
                 record = res.single()
                 return record["id"]
             except Exception:
-                res = session.run(fallback_query, name=entity.name, entity_type=entity.entity_type, properties_json=properties_json)
+                res = session.run(fallback_query, name=entity.name, entity_type=entity.entity_type, properties_json=properties_json, last_synced=last_synced)
                 record = res.single()
                 return record["id"]
 
@@ -519,6 +574,16 @@ class Neo4jGraphStore(BaseGraphStore):
         query = "MATCH (n) DETACH DELETE n"
         with self.driver.session() as session:
             session.run(query)
+
+    def delete_before(self, date_str: str) -> bool:
+        query = "MATCH (e:Entity) WHERE e.last_synced < $date DETACH DELETE e"
+        with self.driver.session() as session:
+            try:
+                session.run(query, date=date_str)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to delete entities from Neo4j: {e}")
+                return False
 
     def close(self):
         self.driver.close()

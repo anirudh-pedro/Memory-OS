@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
+from ontology.entity_types import EntityType
+from ontology.relationship_types import RelationshipType
 
 class Memory(BaseModel):
     id: Optional[int] = None
@@ -20,7 +22,7 @@ class MemoryChunk(BaseModel):
 
 class Entity(BaseModel):
     name: str = Field(..., description="Unique, normalized name of the entity")
-    entity_type: str = Field(..., description="One of: Person, Project, Task, Technology, Document, Conversation, Event, Organization, Repository")
+    entity_type: EntityType = Field(..., description="Canonical entity category")
     description: Optional[str] = Field(None, description="Extracted brief summary or context")
     aliases: List[str] = Field(default_factory=list, description="Alternative names for this entity used for resolution")
     properties: Dict[str, Any] = Field(default_factory=dict)
@@ -28,7 +30,7 @@ class Entity(BaseModel):
 class Relationship(BaseModel):
     source_name: str
     target_name: str
-    relation_type: str = Field(..., description="One of: WORKS_ON, USES, DEPENDS_ON, MENTIONED_IN, CREATED, RELATED_TO, ATTENDS")
+    relation_type: RelationshipType = Field(..., description="Canonical relationship type between the entities")
     properties: Dict[str, Any] = Field(default_factory=dict)
 
 class GraphExtractionResult(BaseModel):

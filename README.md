@@ -1,53 +1,92 @@
 # Memory-OS 🧠
 
-Memory-OS is a stateful, AI-powered personal assistant agent designed to connect your primary productivity platforms—**GitHub**, **Google Calendar**, and **Notion**—and orchestrate them through a single command-line interface. It features both short-term conversational context and a persistent long-term memory database.
+Memory-OS is a CLI-based **Personal Knowledge Operating System (PKOS)**. It syncs your personal knowledge from external platforms — **GitHub**, **Gmail**, **Notion**, and **Google Calendar** — into a searchable second brain backed by **SQLite**, **Qdrant**, and **Neo4j**.
 
 ---
 
 ## ✨ Features
 
-- **🗣️ Interactive CLI Chat Loop:** A real-time chat interface with structured, clean output formatting.
-- **💾 Short-Term Conversational Memory:** Powered by LangGraph's `SqliteSaver` checkpointer. Conversational threads are persisted across system restarts.
-- **🧠 Long-Term Semantic Memory (RAG):** Saves facts and user preferences (e.g. favorite programming languages, project repositories, birthdates) into a persistent database, letting the agent recall them in future sessions.
-- **🔄 Multi-Session Support:** Start, switch, or isolate different conversations using custom session IDs.
-- **⚙️ Integrated Productivity Toolkits:**
-  * **GitHub:** Read profile details, create public/private repositories, and open issue tickets.
-  * **Google Calendar:** List calendar directories, create events, and quick-add appointments.
-  * **Notion:** List workspace members, create documents/pages, and append block content.
+- **🔄 Multi-Source Sync**: Pulls data from GitHub (repos, issues, PRs, READMEs), Gmail (emails), Notion (pages), and Google Calendar (events) via Composio connectors.
+- **🧠 Knowledge Graph**: Automatically extracts entities (People, Projects, Technologies, Tasks, etc.) and relationships using LLM-powered GraphRAG extraction, validated through a quality pipeline.
+- **🔍 Hybrid Search**: Queries combine vector similarity (Qdrant TF-IDF), full-text search (SQLite FTS5), and graph neighbor traversal — fused into unified context for LLM-powered answers.
+- **📊 Stats & Metrics**: View knowledge graph sizes, vector counts, entity breakdowns, and last sync timestamps.
+- **🗑️ Date-Based Pruning**: Delete old records across all three stores with a single command.
+- **💬 Natural Language Queries**: Ask questions about your synced knowledge and get direct answers powered by Groq LLMs.
 
 ---
 
-## 🛠️ Commands
-
-While interacting with Memory-OS, you can issue the following control commands directly in the prompt:
+## 🛠️ CLI Commands
 
 | Command | Action |
 | :--- | :--- |
-| `/session <id>` | Switch to or create a different conversation thread (e.g. `/session work_chat`). |
-| `/clear` | Clear the conversational history of the active session. |
-| `exit` / `quit` | Gracefully exit the terminal chat loop. |
+| `sync` | Sync all connectors and ingest into SQLite, Qdrant, and Neo4j. |
+| `sync --rebuild` | Full rebuild: refit embedder and recreate vector index. |
+| `stats` | Display knowledge graph metrics, vector counts, and last sync time. |
+| `delete --before YYYY-MM-DD` | Prune records older than the specified date. |
+| `<natural language query>` | Ask a question — Memory-OS answers using hybrid RAG retrieval. |
+| `exit` / `quit` | Exit the shell. |
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Installation
-This project uses `uv` for lightning-fast Python package and project management. Install the dependencies by running:
+### 1. Install Dependencies
 ```bash
 uv sync
 ```
-*(Or manually install using `uv pip install -r pyproject.toml`)*
 
 ### 2. Environment Configuration
 Create a `.env` file in the root directory:
 ```env
 COMPOSIO_API_KEY=your_composio_api_key
 GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# Optional: Neo4j (falls back to SQLite graph store if not set)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
 ```
 
 ### 3. Run Memory-OS
-Launch the interactive CLI:
 ```bash
-uv run python main.py
+uv run main.py
 ```
-On your first run, the script will guide you with authorization URLs to connect your GitHub, Google Calendar, and Notion accounts in your web browser. Once connected, they will remain active automatically.
+
+On first run, the CLI will guide you through OAuth flows to connect your GitHub, Gmail, Notion, and Google Calendar accounts.
+
+---
+
+## 🏗️ Architecture
+
+```
+GitHub, Gmail, Notion, Calendar
+           ↓
+    Composio Connectors
+           ↓
+      Sync Pipeline (core/pipeline.py)
+     /      |      \
+    v       v       v
+SQLite    Qdrant   LLM Extractor (core/extractor.py)
+(Cache)  (Vectors)   ↓
+                     Entity Validation & Resolution (memory/quality.py)
+                     ↓
+                   SQLite (metadata.db) & Neo4j
+                     (Clean Entities & Relationships)
+```
+
+### Key Modules
+| Module | Purpose |
+| :--- | :--- |
+| `main.py` | CLI entry point and orchestrator |
+| `core/pipeline.py` | Ingestion pipeline: cache → vectors → graph extraction |
+| `core/extractor.py` | LLM-powered entity/relationship extraction with JSON repair |
+| `core/embeddings.py` | TF-IDF embedder with vocabulary persistence |
+| `core/vector_store.py` | Qdrant vector store wrapper |
+| `core/graph_store.py` | SQLite and Neo4j graph store implementations |
+| `core/db.py` | SQLite connection manager and schema migrations |
+| `retrieval/searcher.py` | Hybrid search: vector + FTS + graph neighbor fusion |
+| `memory/quality.py` | Entity validation, technology classification, project detection |
+| `memory/events.py` | Event sourcing logger |
+| `connectors/` | GitHub, Gmail, Notion, Calendar data fetchers |
+| `ontology/` | Entity type and relationship type enums |
