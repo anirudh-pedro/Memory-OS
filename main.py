@@ -20,6 +20,12 @@ from storage.tech_detector import (
 import re
 from connectors.github import sync_github
 from connectors.gmail import sync_gmail
+from core.vector_store import (
+    hybrid_search,
+    run_reindexing,
+    run_semantic_search,
+    get_vector_index_stats
+)
 
 # Load environment variables (such as COMPOSIO_API_KEY)
 load_dotenv()
@@ -93,6 +99,10 @@ def print_menu():
     print("  repo-files <repository_name>")
     print("  repo-readme <repository_name>")
     print("  repo-summary <repository_name>")
+    print("  export-documents")
+    print("  reindex")
+    print("  semantic-search <query>")
+    print("  vector-stats")
     print("  stats")
     print("  exit")
     print("==================================================")
@@ -162,7 +172,7 @@ def main():
                     print("Usage: search <query>")
                 else:
                     query = parts[1].strip()
-                    results = search_local_knowledge_ranked(query)
+                    results = hybrid_search(query)
                     
                     print("========================================")
                     print("SEARCH RESULTS")
@@ -190,6 +200,105 @@ def main():
                                 print(f"   Preview: {preview}")
                             print("-" * 40)
                     print("========================================")
+
+            elif user_input_lower == "export-documents":
+                # Calculate counts and chunks on the fly
+                from storage.db import get_repo_count, get_email_count, get_repository_document_count, get_all_documents, get_all_emails
+                from core.chunker import chunk_text
+                
+                repos_count = get_repo_count()
+                emails_count = get_email_count()
+                docs_count = get_repository_document_count()
+                
+                docs = get_all_documents()
+                repo_docs_chunks = {}
+                total_chunks = 0
+                
+                for doc in docs:
+                    content = doc["content"] or ""
+                    c_count = len(chunk_text(content))
+                    total_chunks += c_count
+                    repo_name = doc["repo_name"]
+                    if repo_name not in repo_docs_chunks:
+                        repo_docs_chunks[repo_name] = []
+                    repo_docs_chunks[repo_name].append((doc["file_name"], c_count))
+                    
+                emails = get_all_emails()
+                for email in emails:
+                    email_text = f"Subject: {email['subject']}\nFrom: {email['sender']}\nDate: {email['received_at']}\nContent: {email['snippet']}"
+                    total_chunks += len(chunk_text(email_text))
+                    
+                print("========================================")
+                print("DOCUMENT EXPORT SUMMARY")
+                print("========================================")
+                print(f"Repositories: {repos_count}")
+                print(f"Emails: {emails_count}")
+                print(f"Documents: {docs_count}")
+                print(f"\nChunks Generated: {total_chunks}")
+                print()
+                
+                # Sort repositories case-insensitively
+                for r_name in sorted(repo_docs_chunks.keys(), key=lambda s: s.lower()):
+                    print("========================================")
+                    print(f"\nRepository: {r_name}")
+                    # Sort documents case-insensitively
+                    sorted_docs = sorted(repo_docs_chunks[r_name], key=lambda x: x[0].lower())
+                    for doc_name, chunks_count in sorted_docs:
+                        print(f"\n{doc_name}")
+                        print(f"\nChunks:\n{chunks_count}")
+                    print()
+                print("========================================")
+
+            elif user_input_lower == "reindex":
+                res = run_reindexing()
+                print("========================================")
+                print("REINDEX COMPLETE")
+                print("========================================")
+                print(f"\nDocuments: {res['documents']}")
+                print(f"\nChunks: {res['chunks']}")
+                print(f"\nCollection:\n{res['collection']}")
+                print(f"\nDimension:\n{res['dimension']}")
+                print(f"\nVectors Uploaded:\n{res['vectors_uploaded']}")
+                print("\n========================================")
+
+            elif user_input_lower.startswith("semantic-search"):
+                parts = user_input.split(maxsplit=1)
+                if len(parts) < 2:
+                    print("Usage: semantic-search <query>")
+                else:
+                    query = parts[1].strip()
+                    results = run_semantic_search(query, limit=5)
+                    
+                    print("========================================")
+                    print("SEMANTIC SEARCH RESULTS")
+                    print("========================================")
+                    print(f"\nQuery:\n\n{query}")
+                    print("\nResults:")
+                    if not results:
+                        print("\nNo results found.")
+                    else:
+                        for idx, res in enumerate(results, start=1):
+                            print(f"\n{idx}.\n")
+                            print("Repository:")
+                            print(res["repository_name"])
+                            print("\nScore:")
+                            print(f"{res['score']:.2f}")
+                            print("\nChunk:\n")
+                            print(res["chunk_text"])
+                            if idx < len(results):
+                                print("\n----------------------------------------")
+                    print("\n========================================")
+
+            elif user_input_lower == "vector-stats":
+                stats = get_vector_index_stats()
+                print("========================================")
+                print("VECTOR INDEX STATS")
+                print("========================================")
+                print(f"\nCollection:\n{stats['collection']}")
+                print(f"\nDimension:\n{stats['dimension']}")
+                print(f"\nVectors:\n{stats['vectors']}")
+                print(f"\nEmbedding Model:\n{stats['embedding_model']}")
+                print("\n========================================")
 
             elif user_input_lower == "projects":
                 repos = get_all_repositories()

@@ -30,3 +30,13 @@ CREATE TABLE IF NOT EXISTS repository_documents (
     source TEXT,
     synced_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_name TEXT,
+    document_name TEXT,
+    source_type TEXT,
+    chunk_text TEXT,
+    chunk_index INTEGER,
+    created_at TEXT
+);

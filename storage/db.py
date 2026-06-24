@@ -177,6 +177,7 @@ def clear_all():
     cursor.execute("DELETE FROM repositories")
     cursor.execute("DELETE FROM repository_documents")
     cursor.execute("DELETE FROM emails")
+    cursor.execute("DELETE FROM document_chunks")
     conn.commit()
     conn.close()
 
@@ -390,3 +391,67 @@ def get_all_documents() -> list:
     ]
     conn.close()
     return docs
+
+def insert_document_chunk(repository_name: str, document_name: str, source_type: str, chunk_text: str, chunk_index: int, created_at: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO document_chunks (repository_name, document_name, source_type, chunk_text, chunk_index, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (repository_name, document_name, source_type, chunk_text, chunk_index, created_at)
+    )
+    conn.commit()
+    conn.close()
+
+def clear_document_chunks():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM document_chunks")
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'document_chunks'")
+    conn.commit()
+    conn.close()
+
+def get_document_chunk_count() -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM document_chunks")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_all_document_chunks() -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, repository_name, document_name, source_type, chunk_text, chunk_index FROM document_chunks")
+    chunks = [
+        {
+            "id": row[0],
+            "repository_name": row[1],
+            "document_name": row[2],
+            "source_type": row[3],
+            "chunk_text": row[4],
+            "chunk_index": row[5]
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return chunks
+
+def get_all_emails() -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_id, subject, sender, snippet, received_at FROM emails")
+    emails = [
+        {
+            "message_id": row[0],
+            "subject": row[1],
+            "sender": row[2],
+            "snippet": row[3],
+            "received_at": row[4]
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return emails
