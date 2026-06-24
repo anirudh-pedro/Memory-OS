@@ -40,3 +40,12 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Qdrant local storage
+qdrant_storage/
+
+# TF-IDF model files
+tfidf_model.json
+
+# Logs directory
+logs/
