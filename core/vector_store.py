@@ -55,7 +55,8 @@ def upload_chunks_to_qdrant(client: QdrantClient, chunks: list, embeddings: list
                     "repository_name": chunk["repository_name"],
                     "document_name": chunk["document_name"],
                     "source_type": chunk["source_type"],
-                    "chunk_text": chunk["chunk_text"]
+                    "chunk_text": chunk["chunk_text"],
+                    "chunk_index": chunk["chunk_index"]
                 }
             )
         )
@@ -132,99 +133,211 @@ def get_vector_index_stats() -> dict:
     finally:
         client.close()
 
-def run_semantic_search(query: str, limit: int = 5) -> list:
+def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, raw_scores: bool = False) -> list:
     embedder = Embedder()
     vector = embedder.embed_query(query)
     
+    query_filter = None
+    if source_filter:
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="source_type",
+                    match=models.MatchValue(value=source_filter)
+                )
+            ]
+        )
+        
     client = get_qdrant_client()
     try:
+        # If we need raw scores, query with the exact limit.
+        # Otherwise, query a larger limit (e.g. limit * 4) to allow for keyword boost re-ranking.
+        qdrant_limit = limit if raw_scores else limit * 4
+        
         search_result = client.query_points(
             collection_name=COLLECTION_NAME,
             query=vector,
-            limit=limit
+            query_filter=query_filter,
+            limit=qdrant_limit
         )
         
         results = []
         for point in search_result.points:
             payload = point.payload
-            results.append({
-                "score": point.score,
+            item = {
                 "repository_name": payload.get("repository_name"),
                 "document_name": payload.get("document_name"),
                 "source_type": payload.get("source_type"),
-                "chunk_text": payload.get("chunk_text")
-            })
-        return results
+                "chunk_text": payload.get("chunk_text"),
+                "chunk_index": payload.get("chunk_index")
+            }
+            
+            if raw_scores:
+                item["score"] = point.score
+            else:
+                boost = compute_keyword_boost(item, query)
+                item["score"] = round((point.score * 0.8) + (boost * 0.2), 4)
+                
+            results.append(item)
+            
+        if not raw_scores:
+            results.sort(key=lambda x: (-x["score"], x.get("repository_name") or ""))
+            
+        return results[:limit]
     except Exception:
         return []
     finally:
         client.close()
 
-def hybrid_search(query: str) -> list:
+def compute_keyword_boost(item: dict, query: str) -> float:
+    repo_name = item.get("repo_name") or ""
+    file_name = item.get("file_name") or ""
+    description = item.get("description") or ""
+    
+    if not description and repo_name:
+        from storage.db import get_repository_details
+        details = get_repository_details(repo_name)
+        if details:
+            description = details.get("description") or ""
+            
+    query_lower = query.lower().strip()
+    stop_words = {"a", "an", "the", "in", "of", "and", "or", "to", "for", "with", "is", "at", "on", "by"}
+    query_terms = [term for term in query_lower.split() if term not in stop_words and len(term) > 1]
+    if not query_terms:
+        query_terms = [term for term in query_lower.split() if len(term) > 0]
+        
+    repo_lower = repo_name.lower()
+    desc_lower = description.lower()
+    file_lower = file_name.lower()
+    
+    boost = 0.0
+    
+    # 1. Repository name contains query terms
+    if any(term in repo_lower for term in query_terms):
+        boost += 0.5
+        # Exact match bonus
+        if query_lower == repo_lower:
+            boost += 0.3
+            
+    # 2. README title contains query terms (document is README.md and repo name contains query terms)
+    if "readme" in file_lower and any(term in repo_lower for term in query_terms):
+        boost += 0.2
+        
+    # 3. Repository description contains query terms
+    if any(term in desc_lower for term in query_terms):
+        boost += 0.2
+        
+    return min(1.0, boost)
+
+def hybrid_search(query: str, source_filter: str = None) -> list:
     from storage.db import search_local_knowledge_ranked
     
     # 1. Run keyword search
     keyword_results = search_local_knowledge_ranked(query)
     
     # 2. Run semantic search
-    semantic_results = run_semantic_search(query, limit=10)
+    semantic_results = run_semantic_search(query, limit=20, source_filter=source_filter)
     
-    # Create lookup map
-    lookup = {}
-    for idx, item in enumerate(keyword_results):
+    # Create candidate map to merge results
+    candidates = {}
+    
+    # Parse keyword search results
+    for item in keyword_results:
         t = item["type"]
         if t == "repository":
             key = f"repository:{item['repo_name'].lower()}"
+            candidates[key] = {
+                "type": "repository",
+                "repo_name": item["repo_name"],
+                "language": item.get("language"),
+                "description": item.get("description"),
+                "semantic_similarity": 0.0
+            }
         elif t == "document":
             key = f"document:{item['repo_name'].lower()}:{item['file_name'].lower()}"
+            candidates[key] = {
+                "type": "document",
+                "repo_name": item["repo_name"],
+                "file_name": item["file_name"],
+                "content": item["content"],
+                "semantic_similarity": 0.0
+            }
         elif t == "email":
             key = f"email:{item['subject'].lower()}"
-        lookup[key] = idx
-        
-    # We want to apply semantic score boost ONLY ONCE per unique document/email.
-    # Track which keys have already received a semantic boost.
-    boosted_keys = set()
-    
-    # Merge results
+            candidates[key] = {
+                "type": "email",
+                "subject": item["subject"],
+                "sender": item["sender"],
+                "snippet": item["snippet"],
+                "semantic_similarity": 0.0
+            }
+            
+    # Merge semantic search results (keep highest semantic score per unique result key)
     for sem in semantic_results:
-        sem_score_points = round(sem["score"] * 10, 2)
         source = sem["source_type"]
         
-        if source == "github":
-            doc_key = f"document:{sem['repository_name'].lower()}:{sem['document_name'].lower()}"
-            if doc_key in boosted_keys:
-                continue
-            boosted_keys.add(doc_key)
-            
-            if doc_key in lookup:
-                keyword_results[lookup[doc_key]]["score"] += sem_score_points
+        if source == "repository":
+            key = f"repository:{sem['repository_name'].lower()}"
+            if key not in candidates:
+                candidates[key] = {
+                    "type": "repository",
+                    "repo_name": sem["repository_name"],
+                    "description": sem["chunk_text"],
+                    "semantic_similarity": sem["score"]
+                }
             else:
-                keyword_results.append({
+                candidates[key]["semantic_similarity"] = max(candidates[key]["semantic_similarity"], sem["score"])
+                
+        elif source == "document":
+            key = f"document:{sem['repository_name'].lower()}:{sem['document_name'].lower()}"
+            if key not in candidates:
+                candidates[key] = {
                     "type": "document",
-                    "score": sem_score_points,
                     "repo_name": sem["repository_name"],
                     "file_name": sem["document_name"],
-                    "content": sem["chunk_text"]
-                })
-                lookup[doc_key] = len(keyword_results) - 1
-        elif source == "gmail":
-            email_key = f"email:{sem['document_name'].lower()}"
-            if email_key in boosted_keys:
-                continue
-            boosted_keys.add(email_key)
-            
-            if email_key in lookup:
-                keyword_results[lookup[email_key]]["score"] += sem_score_points
+                    "content": sem["chunk_text"],
+                    "semantic_similarity": sem["score"]
+                }
             else:
-                keyword_results.append({
+                candidates[key]["semantic_similarity"] = max(candidates[key]["semantic_similarity"], sem["score"])
+                
+        elif source == "email":
+            key = f"email:{sem['document_name'].lower()}"
+            if key not in candidates:
+                candidates[key] = {
                     "type": "email",
-                    "score": sem_score_points,
                     "subject": sem["document_name"],
                     "sender": "Gmail Index",
-                    "snippet": sem["chunk_text"]
-                })
-                lookup[email_key] = len(keyword_results) - 1
+                    "snippet": sem["chunk_text"],
+                    "semantic_similarity": sem["score"]
+                }
+            else:
+                candidates[key]["semantic_similarity"] = max(candidates[key]["semantic_similarity"], sem["score"])
                 
+    # Filter candidates by source_filter if specified
+    filtered_candidates = []
+    for cand in candidates.values():
+        t = cand["type"]
+        if source_filter:
+            # Match the source_filter exactly
+            if source_filter == "repository" and t != "repository":
+                continue
+            if source_filter == "document" and t != "document":
+                continue
+            if source_filter == "email" and t != "email":
+                continue
+        filtered_candidates.append(cand)
+        
+    # Calculate final scores
+    results = []
+    for cand in filtered_candidates:
+        sim = cand["semantic_similarity"]
+        boost = compute_keyword_boost(cand, query)
+        final_score = round((sim * 0.8) + (boost * 0.2), 4)
+        
+        cand["score"] = final_score
+        results.append(cand)
+        
     # Re-sort ranked results
-    keyword_results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
-    return keyword_results
+    results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
+    return results

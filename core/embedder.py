@@ -1,17 +1,18 @@
 import os
-from sentence_transformers import SentenceTransformer
 
 class Embedder:
+    _model = None
+
     def __init__(self):
         self.model_name = "all-MiniLM-L6-v2"
-        self._model = None
 
     @property
     def model(self):
-        if self._model is None:
+        if Embedder._model is None:
             # Load SentenceTransformer model
-            self._model = SentenceTransformer(self.model_name)
-        return self._model
+            from sentence_transformers import SentenceTransformer
+            Embedder._model = SentenceTransformer(self.model_name)
+        return Embedder._model
 
     def fit(self, documents=None):
         # SentenceTransformer all-MiniLM-L6-v2 is pre-trained, so this is a no-op

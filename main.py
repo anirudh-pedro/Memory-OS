@@ -95,13 +95,14 @@ def print_menu():
     print("  sync-github")
     print("  sync-gmail")
     print("  repo-info <repository_name>")
-    print("  search <query>")
+    print("  search <query> [--repos-only|--docs-only|--emails-only]")
     print("  repo-files <repository_name>")
     print("  repo-readme <repository_name>")
     print("  repo-summary <repository_name>")
     print("  export-documents")
     print("  reindex")
-    print("  semantic-search <query>")
+    print("  semantic-search <query> [--repos-only|--docs-only|--emails-only]")
+    print("  debug-retrieval <query>")
     print("  vector-stats")
     print("  stats")
     print("  exit")
@@ -169,10 +170,21 @@ def main():
             elif user_input_lower.startswith("search"):
                 parts = user_input.split(maxsplit=1)
                 if len(parts) < 2:
-                    print("Usage: search <query>")
+                    print("Usage: search <query> [--repos-only|--docs-only|--emails-only]")
                 else:
-                    query = parts[1].strip()
-                    results = hybrid_search(query)
+                    full_query = parts[1].strip()
+                    source_filter = None
+                    if "--repos-only" in full_query:
+                        source_filter = "repository"
+                        full_query = full_query.replace("--repos-only", "").strip()
+                    elif "--docs-only" in full_query:
+                        source_filter = "document"
+                        full_query = full_query.replace("--docs-only", "").strip()
+                    elif "--emails-only" in full_query:
+                        source_filter = "email"
+                        full_query = full_query.replace("--emails-only", "").strip()
+                        
+                    results = hybrid_search(full_query, source_filter=source_filter)
                     
                     print("========================================")
                     print("SEARCH RESULTS")
@@ -191,12 +203,14 @@ def main():
                                 print(f"   Description: {desc_cleaned}")
                             elif t == "document":
                                 print(f"{idx}. [Document] {item['repo_name']} - {item['file_name']} (Score: {item['score']})")
-                                preview = get_preview_snippet(item['content'], query)
+                                content_to_preview = item.get("content") or ""
+                                preview = get_preview_snippet(content_to_preview, full_query)
                                 print(f"   Preview: {preview}")
                             elif t == "email":
                                 print(f"{idx}. [Email] {item['subject']} (Score: {item['score']})")
                                 print(f"   Sender: {item['sender']}")
-                                preview = get_preview_snippet(item['snippet'], query)
+                                snippet_to_preview = item.get("snippet") or ""
+                                preview = get_preview_snippet(snippet_to_preview, full_query)
                                 print(f"   Preview: {preview}")
                             print("-" * 40)
                     print("========================================")
@@ -264,15 +278,26 @@ def main():
             elif user_input_lower.startswith("semantic-search"):
                 parts = user_input.split(maxsplit=1)
                 if len(parts) < 2:
-                    print("Usage: semantic-search <query>")
+                    print("Usage: semantic-search <query> [--repos-only|--docs-only|--emails-only]")
                 else:
-                    query = parts[1].strip()
-                    results = run_semantic_search(query, limit=5)
+                    full_query = parts[1].strip()
+                    source_filter = None
+                    if "--repos-only" in full_query:
+                        source_filter = "repository"
+                        full_query = full_query.replace("--repos-only", "").strip()
+                    elif "--docs-only" in full_query:
+                        source_filter = "document"
+                        full_query = full_query.replace("--docs-only", "").strip()
+                    elif "--emails-only" in full_query:
+                        source_filter = "email"
+                        full_query = full_query.replace("--emails-only", "").strip()
+                        
+                    results = run_semantic_search(full_query, limit=5, source_filter=source_filter)
                     
                     print("========================================")
                     print("SEMANTIC SEARCH RESULTS")
                     print("========================================")
-                    print(f"\nQuery:\n\n{query}")
+                    print(f"\nQuery:\n\n{full_query}")
                     print("\nResults:")
                     if not results:
                         print("\nNo results found.")
@@ -285,6 +310,36 @@ def main():
                             print(f"{res['score']:.2f}")
                             print("\nChunk:\n")
                             print(res["chunk_text"])
+                            if idx < len(results):
+                                print("\n----------------------------------------")
+                    print("\n========================================")
+
+            elif user_input_lower.startswith("debug-retrieval"):
+                parts = user_input.split(maxsplit=1)
+                if len(parts) < 2:
+                    print("Usage: debug-retrieval <query>")
+                else:
+                    query = parts[1].strip()
+                    results = run_semantic_search(query, limit=5, raw_scores=True)
+                    
+                    print("========================================")
+                    print("RETRIEVAL DIAGNOSTICS")
+                    print("========================================")
+                    print(f"\nQuery:\n{query}")
+                    print("\nTop Semantic Hits:")
+                    if not results:
+                        print("\nNo semantic hits found.")
+                    else:
+                        for idx, res in enumerate(results, start=1):
+                            print(f"\n{idx}.\n")
+                            print("Score:")
+                            print(f"{res['score']:.2f}")
+                            print("\nSource Type:")
+                            print(res["source_type"])
+                            print("\nRepository:")
+                            print(res["repository_name"])
+                            print("\nDocument:")
+                            print(res["document_name"])
                             if idx < len(results):
                                 print("\n----------------------------------------")
                     print("\n========================================")
