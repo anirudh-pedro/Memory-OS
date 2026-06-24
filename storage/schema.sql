@@ -1,10 +1,12 @@
 CREATE TABLE IF NOT EXISTS emails (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT UNIQUE,
     subject TEXT,
     sender TEXT,
     snippet TEXT,
     received_at TEXT
 );
+
 
 CREATE TABLE IF NOT EXISTS repositories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

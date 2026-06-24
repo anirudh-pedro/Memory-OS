@@ -2,8 +2,15 @@ from composio import Composio
 from models.memory import Email
 from storage.db import insert_email
 
+import sys
+
 def sync_gmail():
     try:
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+            
         c = Composio()
         s = c.create(user_id="user_123")
         
@@ -31,6 +38,7 @@ def sync_gmail():
         print(f"Found {len(emails)} emails")
         
         for email in emails:
+            message_id = email.get("id") or email.get("messageId") or email.get("threadId") or ""
             subject = email.get("subject") or "No Subject"
             sender = email.get("sender") or email.get("from") or "Unknown Sender"
             snippet = email.get("messageText") or email.get("snippet") or ""
@@ -39,6 +47,7 @@ def sync_gmail():
 
             # Save to SQLite
             db_email = Email(
+                message_id=message_id,
                 subject=subject,
                 sender=sender,
                 snippet=snippet,

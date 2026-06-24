@@ -20,7 +20,8 @@ class RepositoryDocument:
         self.synced_at = synced_at
 
 class Email:
-    def __init__(self, subject: str, sender: str, snippet: str, received_at: str):
+    def __init__(self, message_id: str, subject: str, sender: str, snippet: str, received_at: str):
+        self.message_id = message_id
         self.subject = subject
         self.sender = sender
         self.snippet = snippet
