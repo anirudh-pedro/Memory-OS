@@ -159,7 +159,6 @@ def get_repository_details(repo_name: str):
         "files": files,
         "readme": readme_content
     }
-
 def clear_all():
     conn = get_connection()
     cursor = conn.cursor()
@@ -168,3 +167,103 @@ def clear_all():
     cursor.execute("DELETE FROM emails")
     conn.commit()
     conn.close()
+
+def search_local_knowledge(query: str) -> dict:
+    conn = get_connection()
+    cursor = conn.cursor()
+    q = f"%{query.lower()}%"
+    
+    # Search Repositories
+    cursor.execute(
+        """
+        SELECT repo_name, language, description 
+        FROM repositories 
+        WHERE LOWER(repo_name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(language) LIKE ?
+        """,
+        (q, q, q)
+    )
+    repos = [
+        {"repo_name": row[0], "language": row[1], "description": row[2]}
+        for row in cursor.fetchall()
+    ]
+    
+    # Search Documents
+    cursor.execute(
+        """
+        SELECT repo_name, file_name, content 
+        FROM repository_documents 
+        WHERE LOWER(file_name) LIKE ? OR LOWER(content) LIKE ?
+        """,
+        (q, q)
+    )
+    docs = [
+        {"repo_name": row[0], "file_name": row[1], "content": row[2]}
+        for row in cursor.fetchall()
+    ]
+    
+    # Search Emails
+    cursor.execute(
+        """
+        SELECT subject, sender, snippet 
+        FROM emails 
+        WHERE LOWER(subject) LIKE ? OR LOWER(sender) LIKE ? OR LOWER(snippet) LIKE ?
+        """,
+        (q, q, q)
+    )
+    emails = [
+        {"subject": row[0], "sender": row[1], "snippet": row[2]}
+        for row in cursor.fetchall()
+    ]
+    
+    conn.close()
+    return {
+        "repositories": repos,
+        "documents": docs,
+        "emails": emails
+    }
+
+def get_repository_files(repo_name: str) -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_name FROM repository_documents WHERE repo_name = ?", (repo_name,))
+    files = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return files
+
+def get_repository_readme(repo_name: str) -> str:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT content FROM repository_documents WHERE repo_name = ? AND file_name = 'README.md'", (repo_name,))
+    row = cursor.fetchone()
+    readme = row[0] if row else None
+    conn.close()
+    return readme
+
+def get_repository_summary_data(repo_name: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT language, stars, forks, updated_at FROM repositories WHERE repo_name = ?",
+        (repo_name,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    
+    cursor.execute(
+        "SELECT file_name FROM repository_documents WHERE repo_name = ?",
+        (repo_name,)
+    )
+    files = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    
+    return {
+        "repo_name": repo_name,
+        "language": row[0],
+        "stars": row[1],
+        "forks": row[2],
+        "updated_at": row[3],
+        "documents_count": len(files),
+        "files": files
+    }
