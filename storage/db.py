@@ -1,6 +1,6 @@
 import sqlite3
 import os
-
+import logging
 DB_PATH = "memory.db"
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
@@ -236,7 +236,104 @@ def search_local_knowledge(query: str) -> dict:
     }
 
 def search_local_knowledge_ranked(query: str) -> list:
+    """Ranked search across repositories, documents, and emails.
+
+    Applies configurable boost for repository scores and weight for email scores.
+    Adds ``source_type`` to each result and logs detailed diagnostics.
+    """
     conn = get_connection()
+    cursor = conn.cursor()
+
+    # Fetch all data for scoring
+    cursor.execute("SELECT repo_name, language, description FROM repositories")
+    repos = cursor.fetchall()
+
+    cursor.execute("SELECT repo_name, file_name, content FROM repository_documents")
+    docs = cursor.fetchall()
+
+    cursor.execute("SELECT subject, sender, snippet FROM emails")
+    emails = cursor.fetchall()
+    conn.close()
+
+    # Configurable boosts (default = 1.0 i.e., no change)
+    repo_boost = float(os.getenv('REPO_SCORE_BOOST', '1.0'))
+    email_weight = float(os.getenv('EMAIL_SCORE_WEIGHT', '1.0'))
+
+    ranked_results = []
+    query_lower = query.lower()
+    logger = logging.getLogger(__name__)
+
+    # --- Score repositories ---
+    for repo_name, language, description in repos:
+        score = 0
+        if repo_name and query_lower in repo_name.lower():
+            score += 10
+        if description and query_lower in description.lower():
+            score += 8
+        if language and query_lower in language.lower():
+            score += 5
+        if score > 0:
+            score = int(score * repo_boost)
+            result = {
+                "type": "repository",
+                "score": score,
+                "repo_name": repo_name,
+                "language": language,
+                "description": description,
+                "source_type": "repository",
+            }
+            ranked_results.append(result)
+            logger.debug(f"Retrieval result - {result}")
+
+    # --- Score documents ---
+    for repo_name, file_name, content in docs:
+        score = 0
+        content_lower = content.lower() if content else ""
+        file_name_lower = file_name.lower() if file_name else ""
+        if query_lower in file_name_lower or query_lower in content_lower:
+            if file_name_lower == "readme.md":
+                score += 6
+            elif file_name_lower == "package.json":
+                score += 4
+            else:
+                score += 3
+        if score > 0:
+            result = {
+                "type": "document",
+                "score": score,
+                "repo_name": repo_name,
+                "file_name": file_name,
+                "content": content,
+                "source_type": "document",
+            }
+            ranked_results.append(result)
+            logger.debug(f"Retrieval result - {result}")
+
+    # --- Score emails ---
+    for subject, sender, snippet in emails:
+        score = 0
+        subj_l = subject.lower() if subject else ""
+        send_l = sender.lower() if sender else ""
+        snip_l = snippet.lower() if snippet else ""
+        if query_lower in subj_l or query_lower in send_l or query_lower in snip_l:
+            score += 2
+        if score > 0:
+            score = int(score * email_weight)
+            result = {
+                "type": "email",
+                "score": score,
+                "subject": subject,
+                "sender": sender,
+                "snippet": snippet,
+                "source_type": "email",
+            }
+            ranked_results.append(result)
+            logger.debug(f"Retrieval result - {result}")
+
+    # Sort descending by score, then stable alphabetical tie‑breaker
+    ranked_results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
+    return ranked_results
+
     cursor = conn.cursor()
     
     # Fetch all for scoring
@@ -257,11 +354,11 @@ def search_local_knowledge_ranked(query: str) -> list:
     for repo_name, language, description in repos:
         score = 0
         if repo_name and query_lower in repo_name.lower():
-            score += 10
+            score += 10 * repo_boost
         if description and query_lower in description.lower():
-            score += 8
+            score += 8 * repo_boost
         if language and query_lower in language.lower():
-            score += 5
+            score += 5 * repo_boost
             
         if score > 0:
             ranked_results.append({
@@ -301,7 +398,7 @@ def search_local_knowledge_ranked(query: str) -> list:
         send_l = sender.lower() if sender else ""
         snip_l = snippet.lower() if snippet else ""
         if query_lower in subj_l or query_lower in send_l or query_lower in snip_l:
-            score += 2
+            score += 2 * email_weight
             
         if score > 0:
             ranked_results.append({
