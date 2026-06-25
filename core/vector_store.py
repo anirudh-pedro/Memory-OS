@@ -137,13 +137,28 @@ def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, r
     embedder = Embedder()
     vector = embedder.embed_query(query)
     
-    query_filter = None
+    # Build query filter that always excludes repository metadata vectors
     if source_filter:
         query_filter = models.Filter(
             must=[
                 models.FieldCondition(
                     key="source_type",
                     match=models.MatchValue(value=source_filter)
+                )
+            ],
+            must_not=[
+                models.FieldCondition(
+                    key="source_type",
+                    match=models.MatchValue(value="repository_metadata")
+                )
+            ]
+        )
+    else:
+        query_filter = models.Filter(
+            must_not=[
+                models.FieldCondition(
+                    key="source_type",
+                    match=models.MatchValue(value="repository_metadata")
                 )
             ]
         )

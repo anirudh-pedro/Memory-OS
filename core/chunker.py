@@ -29,10 +29,11 @@ def generate_and_save_chunks():
     repos = get_all_repositories()
     for repo in repos:
         repo_text = f"Repository: {repo['repo_name']}\nDescription: {repo['description'] or ''}\nLanguage: {repo['language'] or ''}"
+        # Insert repository metadata as a distinct source type to avoid mixing with document content
         insert_document_chunk(
             repository_name=repo["repo_name"],
             document_name="metadata",
-            source_type="repository",
+            source_type="repository_metadata",
             chunk_text=repo_text,
             chunk_index=0,
             created_at=created_at
