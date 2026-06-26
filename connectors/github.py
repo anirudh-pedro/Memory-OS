@@ -2,7 +2,13 @@ import base64
 from datetime import datetime
 from composio import Composio
 from models.memory import Repository, RepositoryDocument
-from storage.db import insert_repository, insert_repository_document, get_repo_count, get_repository_document_count
+from storage.db import (
+    insert_repository,
+    insert_repository_document,
+    get_repo_count,
+    get_repository_document_count,
+    get_repository_details
+)
 
 def decode_github_content(content_str: str, encoding: str = "base64") -> str:
     if not content_str:
@@ -87,6 +93,16 @@ def sync_github():
             repo_name = repo.get("name")
             if not repo_name:
                 continue
+
+            # Incremental sync check
+            existing = get_repository_details(repo_name)
+            if existing:
+                existing_updated_at = existing.get("updated_at") or ""
+                repo_updated_at = repo.get("updated_at") or ""
+                if existing_updated_at and repo_updated_at and existing_updated_at[:19] == repo_updated_at[:19]:
+                    if existing.get("files"):
+                        print(f"Repository {repo_name} is up-to-date. Skipping sync.")
+                        continue
                 
             full_name = repo.get("full_name", "")
             owner = None

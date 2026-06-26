@@ -11,7 +11,14 @@ class Embedder:
         if Embedder._model is None:
             # Load SentenceTransformer model
             from sentence_transformers import SentenceTransformer
-            Embedder._model = SentenceTransformer(self.model_name)
+            try:
+                Embedder._model = SentenceTransformer(self.model_name)
+            except Exception as e:
+                # If network fails or times out, try loading from local cache only
+                try:
+                    Embedder._model = SentenceTransformer(self.model_name, local_files_only=True)
+                except Exception:
+                    raise e
         return Embedder._model
 
     def fit(self, documents=None):

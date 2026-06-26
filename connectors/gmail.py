@@ -1,6 +1,6 @@
 from composio import Composio
 from models.memory import Email
-from storage.db import insert_email
+from storage.db import insert_email, get_connection
 
 import sys
 
@@ -37,8 +37,22 @@ def sync_gmail():
 
         print(f"Found {len(emails)} emails")
         
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        synced_count = 0
+        skipped_count = 0
+
         for email in emails:
             message_id = email.get("id") or email.get("messageId") or email.get("threadId") or ""
+            
+            # Check if email is already in SQLite
+            if message_id:
+                cursor.execute("SELECT id FROM emails WHERE message_id = ?", (message_id,))
+                if cursor.fetchone():
+                    skipped_count += 1
+                    continue
+            
             subject = email.get("subject") or "No Subject"
             sender = email.get("sender") or email.get("from") or "Unknown Sender"
             snippet = email.get("messageText") or email.get("snippet") or ""
@@ -54,6 +68,7 @@ def sync_gmail():
                 received_at=received_at
             )
             insert_email(db_email)
+            synced_count += 1
 
             # Print to terminal
             print("--------------------------------------------------")
@@ -61,6 +76,9 @@ def sync_gmail():
             print(f"From: {sender}")
             print(f"Date: {date_str}")
             print("--------------------------------------------------")
+        
+        conn.close()
+        print(f"Gmail Sync Complete: {synced_count} emails synced, {skipped_count} emails skipped.")
             
     except Exception as e:
         print(f"Error during Gmail sync: {e}")

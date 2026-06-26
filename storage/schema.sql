@@ -40,3 +40,18 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_index INTEGER,
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id TEXT PRIMARY KEY,
+    label TEXT,
+    name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS graph_relationships (
+    id TEXT PRIMARY KEY,
+    source_id TEXT,
+    target_id TEXT,
+    type TEXT,
+    FOREIGN KEY(source_id) REFERENCES graph_nodes(id),
+    FOREIGN KEY(target_id) REFERENCES graph_nodes(id)
+);

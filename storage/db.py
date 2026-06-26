@@ -178,6 +178,8 @@ def clear_all():
     cursor.execute("DELETE FROM repository_documents")
     cursor.execute("DELETE FROM emails")
     cursor.execute("DELETE FROM document_chunks")
+    cursor.execute("DELETE FROM graph_relationships")
+    cursor.execute("DELETE FROM graph_nodes")
     conn.commit()
     conn.close()
 
@@ -235,7 +237,7 @@ def search_local_knowledge(query: str) -> dict:
         "emails": emails
     }
 
-def search_local_knowledge_ranked(query: str) -> list:
+def search_local_knowledge_ranked(query: str, repo_filter: str = None) -> list:
     """Ranked search across repositories, documents, and emails.
 
     Applies configurable boost for repository scores and weight for email scores.
@@ -244,15 +246,24 @@ def search_local_knowledge_ranked(query: str) -> list:
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Fetch all data for scoring
-    cursor.execute("SELECT repo_name, language, description FROM repositories")
-    repos = cursor.fetchall()
+    if repo_filter:
+        cursor.execute("SELECT repo_name, language, description FROM repositories WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
+        repos = cursor.fetchall()
 
-    cursor.execute("SELECT repo_name, file_name, content FROM repository_documents")
-    docs = cursor.fetchall()
+        cursor.execute("SELECT repo_name, file_name, content FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
+        docs = cursor.fetchall()
 
-    cursor.execute("SELECT subject, sender, snippet FROM emails")
-    emails = cursor.fetchall()
+        emails = []
+    else:
+        # Fetch all data for scoring
+        cursor.execute("SELECT repo_name, language, description FROM repositories")
+        repos = cursor.fetchall()
+
+        cursor.execute("SELECT repo_name, file_name, content FROM repository_documents")
+        docs = cursor.fetchall()
+
+        cursor.execute("SELECT subject, sender, snippet FROM emails")
+        emails = cursor.fetchall()
     conn.close()
 
     # Configurable boosts (default = 1.0 i.e., no change)
@@ -331,85 +342,6 @@ def search_local_knowledge_ranked(query: str) -> list:
             logger.debug(f"Retrieval result - {result}")
 
     # Sort descending by score, then stable alphabetical tie‑breaker
-    ranked_results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
-    return ranked_results
-
-    cursor = conn.cursor()
-    
-    # Fetch all for scoring
-    cursor.execute("SELECT repo_name, language, description FROM repositories")
-    repos = cursor.fetchall()
-    
-    cursor.execute("SELECT repo_name, file_name, content FROM repository_documents")
-    docs = cursor.fetchall()
-    
-    cursor.execute("SELECT subject, sender, snippet FROM emails")
-    emails = cursor.fetchall()
-    conn.close()
-    
-    ranked_results = []
-    query_lower = query.lower()
-    
-    # Score repositories
-    for repo_name, language, description in repos:
-        score = 0
-        if repo_name and query_lower in repo_name.lower():
-            score += 10 * repo_boost
-        if description and query_lower in description.lower():
-            score += 8 * repo_boost
-        if language and query_lower in language.lower():
-            score += 5 * repo_boost
-            
-        if score > 0:
-            ranked_results.append({
-                "type": "repository",
-                "score": score,
-                "repo_name": repo_name,
-                "language": language,
-                "description": description
-            })
-            
-    # Score documents
-    for repo_name, file_name, content in docs:
-        score = 0
-        content_lower = content.lower() if content else ""
-        file_name_lower = file_name.lower() if file_name else ""
-        if query_lower in file_name_lower or query_lower in content_lower:
-            if file_name_lower == "readme.md":
-                score += 6
-            elif file_name_lower == "package.json":
-                score += 4
-            else:
-                score += 3
-                
-        if score > 0:
-            ranked_results.append({
-                "type": "document",
-                "score": score,
-                "repo_name": repo_name,
-                "file_name": file_name,
-                "content": content
-            })
-            
-    # Score emails
-    for subject, sender, snippet in emails:
-        score = 0
-        subj_l = subject.lower() if subject else ""
-        send_l = sender.lower() if sender else ""
-        snip_l = snippet.lower() if snippet else ""
-        if query_lower in subj_l or query_lower in send_l or query_lower in snip_l:
-            score += 2 * email_weight
-            
-        if score > 0:
-            ranked_results.append({
-                "type": "email",
-                "score": score,
-                "subject": subject,
-                "sender": sender,
-                "snippet": snippet
-            })
-            
-    # Sort descending by score, then alphabetically for stability
     ranked_results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
     return ranked_results
 
@@ -552,3 +484,81 @@ def get_all_emails() -> list:
     ]
     conn.close()
     return emails
+
+def insert_fallback_node(node_id: str, label: str, name: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO graph_nodes (id, label, name) VALUES (?, ?, ?)",
+        (node_id, label, name)
+    )
+    conn.commit()
+    conn.close()
+
+def insert_fallback_relationship(rel_id: str, source_id: str, target_id: str, type_str: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO graph_relationships (id, source_id, target_id, type) VALUES (?, ?, ?, ?)",
+        (rel_id, source_id, target_id, type_str)
+    )
+    conn.commit()
+    conn.close()
+
+def get_fallback_relationships(node_id: str) -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Find relationships where node_id is either source or target
+    cursor.execute(
+        """
+        SELECT r.type, s.label, s.name, t.label, t.name
+        FROM graph_relationships r
+        JOIN graph_nodes s ON r.source_id = s.id
+        JOIN graph_nodes t ON r.target_id = t.id
+        WHERE r.source_id = ? OR r.target_id = ?
+        """,
+        (node_id, node_id)
+    )
+    results = [
+        {
+            "type": row[0],
+            "source_label": row[1],
+            "source_name": row[2],
+            "target_label": row[3],
+            "target_name": row[4]
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return results
+
+def clear_fallback_graph():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM graph_relationships")
+    cursor.execute("DELETE FROM graph_nodes")
+    conn.commit()
+    conn.close()
+
+def delete_data_before_date(date_str: str) -> dict:
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # We compare string-wise since ISO dates sort correctly
+    cursor.execute("DELETE FROM emails WHERE received_at < ?", (date_str,))
+    emails_deleted = cursor.rowcount
+    
+    cursor.execute("DELETE FROM repository_documents WHERE synced_at < ?", (date_str,))
+    docs_deleted = cursor.rowcount
+    
+    cursor.execute("DELETE FROM document_chunks WHERE created_at < ?", (date_str,))
+    chunks_deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "emails": emails_deleted,
+        "documents": docs_deleted,
+        "chunks": chunks_deleted
+    }
