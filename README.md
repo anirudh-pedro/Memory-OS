@@ -1,107 +1,228 @@
-# Memory‑OS
+# Memory‑OS 🧠
 
 ![banner](https://raw.githubusercontent.com/anirudh-pedro/Memory-OS/main/docs/banner.png)
 
-**Memory‑OS** is a personal‑knowledge operating system that lets you **sync, index, and semantically search** across your GitHub repositories, emails, and other documents. It provides a unified CLI for rapid knowledge retrieval, powered by **Sentence‑Transformers** embeddings and **Qdrant** vector storage.
+**Memory‑OS** is a local Personal Knowledge Operating System that syncs, indexes, and retrieves information across your GitHub repositories, emails, and Notion workspaces. It runs a unified interactive CLI, exposing hybrid keyword + semantic search and natural language QA powered by RAG, local embeddings, and a knowledge graph.
 
 ---
 
-## ✨ Highlights
-- **Unified search** across code, documentation, and email threads.
-- **Instant semantic ranking** with configurable repository boost and email weight.
-- **Robust indexing pipeline** that chunk‑splits raw text, stores metadata, and uploads vector embeddings.
-- **Zero‑configuration model loading** – the `Embedder` loads the Sentence‑Transformer only once per process.
-- **CLI commands** for syncing, re‑indexing, debugging, and detailed retrieval diagnostics.
-- **Extensible architecture** – easy to plug in new data sources or embedding models.
+## 🏗️ Architecture
 
----
+Memory-OS is built as a modular architecture consisting of ingestion, databases, scoring ranking engines, and a terminal user loop:
 
-## 📦 Quick Start
-```bash
-# Clone the repo (already done)
-cd "c:/Users/HP/Desktop/machine learning/Memory-os"
+```mermaid
+graph TD
+    %% Ingestion
+    subgraph Ingestion [1. Ingestion Layer]
+        GH[GitHub Repos & Docs]
+        GM[Gmail Inbox Messages]
+        NT[Notion Page Contents]
+        CP[Composio Integration Platform]
+        GH --> CP
+        GM --> CP
+        NT --> CP
+    end
 
-# Install dependencies (Python 3.10+ recommended)
-uv pip install -r requirements.txt
+    %% Storage & Indexing
+    subgraph Storage [2. Storage & Indexing Layer]
+        DB[(SQLite: memory.db)]
+        QD[(Qdrant: qdrant_storage)]
+        N4J[(Neo4j Graph Database)]
+        SQL_G[(SQLite Graph Fallback)]
+        
+        CP -->|Insert Metadata & Docs| DB
+        DB -->|Text Chunks| CH[Chunking Core]
+        CH -->|Local Embeddings| EM[SentenceTransformer]
+        EM -->|Vectors| QD
+        
+        DB -->|Graph Construction| N4J
+        DB -->|Graph Construction| SQL_G
+    end
 
-# Create .env file (copy from .env.example) and add your Groq API keys, Composio token, etc.
-cp .env.example .env
+    %% Retrieval & RAG
+    subgraph Retrieval [3. Retrieval & RAG Layer]
+        HS[Hybrid Search Router]
+        QD -->|Cosine Similarity| HS
+        DB -->|Keyword Matching| HS
+        N4J -->|Graph Lookups| HS
+        SQL_G -->|Graph Fallback Lookups| HS
+        
+        HR[Hybrid Ranking Scoring]
+        HS --> HR
+        
+        RAG[RAG Context Builder]
+        HR -->|Merged Context| RAG
+        
+        LLM[Groq LLM Pipeline]
+        RAG -->|Prompt Assembly| LLM
+    end
 
-# Initialise SQLite DB and sync data sources
-uv run main.py
-# then inside the interactive shell:
-#   sync-github   # pulls repository docs & README
-#   reindex       # builds chunks and uploads embeddings
+    %% User Interaction
+    subgraph User [4. Interface Layer]
+        CLI[main.py: CLI Command Loop]
+        CLI -->|Sync/Rebuild| Ingestion
+        CLI -->|Search/Ask Queries| Retrieval
+        LLM -->|Formatted Answer| CLI
+    end
 ```
 
 ---
 
-## 🛠️ Core Components
-| Module | Purpose |
-|--------|---------|
-| `connectors/github.py` | Syncs GitHub repos, downloads README, `package.json`, `requirements.txt`, `pyproject.toml`, Docker files, etc. |
-| `core/chunker.py` | Splits raw document text into overlapping chunks (800‑char size, 120‑char overlap) and stores them in the DB. |
-| `core/embedder.py` | Wraps `SentenceTransformer` (`all‑MiniLM‑L6‑v2`). Loads the model **once** (singleton) and provides `embed_documents` / `embed_query`. |
-| `core/vector_store.py` | Handles Qdrant collection creation, vector upload, semantic search, and helper debug commands. |
-| `storage/db.py` | SQLite schema, CRUD for repositories, documents, emails, and chunk storage. |
-| `main.py` | Interactive CLI entry point – routes commands like `semantic‑search`, `debug‑index`, `debug‑vector`, etc. |
+## 🗄️ Database Technology Rationale
+
+Memory-OS adopts a **multi-model storage engine strategy**, selecting each technology to excel at its designated retrieve-and-rank role:
+
+| Database | Selection Rationale |
+| :--- | :--- |
+| **SQLite (`memory.db`)** | Chosen for lightweight, serverless relational structured storage. It holds raw documents, chunk segments, email metadata, and repository statistics, providing ACID compliance and ultra-fast exact keyword searches. |
+| **Qdrant (`qdrant_storage`)** | Chosen as a high-performance vector database optimized for storing and executing cosine similarity search queries on $384$-dimensional dense vector embeddings generated by Sentence-Transformers. |
+| **Neo4j / Fallback SQLite** | Neo4j is utilized as a native graph database to map complex developer relationships (e.g. `Repository-[USES]->Technology` or `Email-[SENT_BY]->User`). If the Neo4j instance is unreachable, it seamlessly falls back to a relational SQLite graph schema (`memory.db`), preserving search functionality offline. |
+
+---
+
+## 📦 Setup Instructions
+
+Ensure you have Python 3.10+ installed.
+
+### 1. Install Dependencies
+We recommend using `uv` or `pip` to manage dependencies in a local virtual environment:
+```bash
+# Clone the repository
+git clone https://github.com/anirudh-pedro/Memory-OS.git
+cd Memory-OS
+
+# Initialize virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install requirements
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory:
+```ini
+# Core API Keys
+GROQ_API_KEY_1=gsk_...
+GROQ_API_KEY_2=gsk_...   # key rotation fallback
+COMPOSIO_API_KEY=comp_...
+
+# Graph Configuration
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+
+# Ranking Tuning
+REPO_SCORE_BOOST=1.0
+EMAIL_SCORE_WEIGHT=1.0
+DEBUG=false
+```
 
 ---
 
 ## 🚀 Available CLI Commands
+
+Start the interactive CLI:
+```bash
+python main.py
 ```
-sync-github               # Pulls repository metadata & selected files
-sync-gmail                # Pulls recent emails (via Composio)
-reindex                   # Chunk, embed and upload all content to Qdrant
-semantic-search <query>   # Perform a semantic search (default limit=5)
-debug-retrieval <query>   # Show raw Qdrant hits with scores
-debug-index <repo>        # Lists documents, chunk counts and total vectors for a repo
-debug-vector <repo>        # Prints the first 5 stored chunks for a repo
-vector-stats              # Shows Qdrant collection stats
+
+Inside the interactive shell:
+```text
+sync                      # Incremental sync from all sources (GitHub, Gmail, Notion)
+sync --rebuild            # Full reset and rebuild of SQLite, Qdrant, and Graph DBs
 stats                     # Shows DB counts for repos, docs, emails
+search <query>            # Hybrid search across knowledge base
+semantic-search <query>   # Perform a semantic search in vector store (limit=5)
+ask <question>            # Query the hybrid retrieval RAG pipeline
+repo-info <repo>          # Show metadata and synced files for a repository
+repo-readme <repo>        # View README of a repository
+repo-files <repo>         # List synced files for a repository
+project-tech <repo>       # List detected technologies for a repository
+projects                  # List all indexed repositories
+tech-stack                # List all detected technologies across repos
+project-search <tech>     # Find repositories using a specific technology
+graph <repo>              # Show knowledge graph relationships for a repository
+graph-tech <tech>         # Show knowledge graph relationships for a technology
+graph-person <person>     # Show knowledge graph relationships for a contributor/sender
+relations <entity>        # Search all graph relationships matching an entity
+debug-index <repo>        # Lists documents, chunk counts, and total vectors for a repo
+debug-vector <repo>       # Prints the first 5 stored chunks for a repo
+debug-retrieval <query>   # Show raw vector hits, scores, and ranking reasons
+vector-stats              # Shows Qdrant collection stats
+delete --before YYYY-MM-D # Delete records older than a date
+reset                     # Reset all local storage (DB and Qdrant)
 exit                      # Quit the interactive shell
 ```
 
 ---
 
-## ⚙️ Configuration
-Environment variables (loaded from `.env`):
-- `GROQ_API_KEY_1`, `GROQ_API_KEY_2` – two keys for automatic rotation on rate‑limit errors.
-- `REPO_SCORE_BOOST` – multiplier for repository scores during ranked search (default `1.0`).
-- `EMAIL_SCORE_WEIGHT` – multiplier for email scores during ranked search (default `1.0`).
-- `DEBUG` – when set to `true`, the system logs full prompts, raw LLM responses and detailed retrieval diagnostics.
+## 📝 Sample CLI Session
 
----
+```text
+Initializing embedding model...
+System ready.
 
-## 📊 Debugging & Diagnostics
-- **`debug-index <repo>`** – prints a summary of all indexed documents, their chunk counts, and total vectors uploaded for the repository.
-- **`debug-vector <repo>`** – fetches the first five stored Qdrant points (payload includes `repository_name`, `document_name`, `source_type`, `chunk_text`, `chunk_index`).
-- All failures of the extractor now log to `logs/extraction_failures.log` with raw LLM output for easy inspection.
+==================================================
+🧠 MEMORY-OS CLI
+==================================================
+...
 
----
+You: stats
+========================================
+MEMORY-OS STATS
+========================================
+Repositories: 8
+Documents: 48
+Emails: 52
+========================================
 
-## 🧪 Testing
-```bash
-# Run unit tests (if any)
-uv run pytest
+You: graph Memory-OS
+========================================
+GRAPH RELATIONSHIPS FOR REPOSITORY: Memory-OS
+========================================
+- Repository 'Memory-OS' CONTAINS Document 'README.md'
+- Repository 'Memory-OS' CONTAINS Document 'pyproject.toml'
+- Repository 'Memory-OS' USES Technology 'Composio'
+- Repository 'Memory-OS' USES Technology 'Docker'
+- Repository 'Memory-OS' USES Technology 'Groq'
+- Repository 'Memory-OS' USES Technology 'LangChain'
+- Repository 'Memory-OS' USES Technology 'Neo4j'
+- Repository 'Memory-OS' USES Technology 'Python'
+- Repository 'Memory-OS' USES Technology 'Qdrant'
+- Repository 'Memory-OS' USES Technology 'SQLite'
+========================================
 
-# Verify that the README is indexed
-uv run main.py
-# inside the shell:
-repo-readme Memory-OS   # should show the README content
-semantic-search "personal knowledge operating system" --repos-only
+You: ask Which technologies does Memory-OS use?
+Retrieval Duration: 0.0825s
+LLM Generation Duration: 1.05s
+Total RAG Pipeline Duration: 1.13s
+========================================
+ANSWER
+========================================
+Memory-OS uses Sentence‑Transformers embeddings and Qdrant vector storage, along with other technologies such as composio, langchain, python-dotenv, and neo4j.
+
+========================================
+SOURCES
+========================================
+- README.md
+- pyproject.toml
+
+========================================
+REPOSITORIES USED
+========================================
+- Memory-OS
+
+========================================
+Confidence: 0.90
+========================================
+
+You: exit
+Closing resources...
+Goodbye!
 ```
-
----
-
-## 🎨 Design Philosophy
-Memory‑OS follows a **premium, glass‑morphic UI**‑style for any future web front‑ends: vibrant gradients, smooth micro‑animations, and modern typography (Inter). The CLI itself uses clear sections, emojis, and consistent formatting to deliver a delightful developer experience.
 
 ---
 
 ## 📜 License
 This project is licensed under the **MIT License**.
-
----
-
-*Happy knowledge hunting!*

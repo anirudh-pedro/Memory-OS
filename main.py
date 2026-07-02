@@ -1,3 +1,4 @@
+import logging
 import sys
 from dotenv import load_dotenv
 from storage.db import (
@@ -7,11 +8,9 @@ from storage.db import (
     get_repository_details,
     get_repository_files,
     get_repository_readme,
-    get_repository_summary_data,
     get_all_repositories,
     clear_all,
     delete_data_before_date,
-    get_document_chunk_count,
     get_repository_document_count,
     get_all_documents,
     get_all_emails,
@@ -61,6 +60,10 @@ def print_menu():
     print("  projects                   - List all repositories")
     print("  tech-stack                 - List all detected technologies")
     print("  project-search <tech>      - Find projects using a technology")
+    print("  graph <repo>               - Show graph relationships for repository")
+    print("  graph-tech <tech>          - Show graph relationships for technology")
+    print("  graph-person <person>      - Show graph relationships for contributor/user")
+    print("  relations <entity>         - Search all graph relationships matching entity")
     print("  debug-index <repo>         - Show documents indexing summary")
     print("  debug-vector <repo>        - Print sample vector payloads")
     print("  debug-retrieval <query>    - Show retrieval scores & details")
@@ -95,7 +98,26 @@ def get_preview_snippet(content: str, query: str, length: int = 120) -> str:
             snippet += "..."
         return snippet
 
+def setup_logging():
+    """Configure standardized application-wide logging."""
+    import os
+    import logging
+    os.makedirs("logs", exist_ok=True)
+    debug_mode = os.getenv("DEBUG", "false").lower() == "true"
+    level = logging.DEBUG if debug_mode else logging.INFO
+    
+    # Configure logging format
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler("logs/memory_os.log", encoding="utf-8"),
+            logging.StreamHandler(sys.stderr) if debug_mode else logging.NullHandler()
+        ]
+    )
+
 def main():
+    setup_logging()
     init_db()
     
     # Load SentenceTransformer model exactly once at startup
@@ -120,7 +142,8 @@ def main():
             # Natural Language Routing
             VALID_COMMANDS = {
                 "exit", "sync", "stats", "search", "semantic-search", "ask",
-                "project-tech", "project-search", "debug-index", "debug-vector",
+                "project-tech", "project-search", "graph", "graph-tech", 
+                "graph-person", "relations", "debug-index", "debug-vector",
                 "debug-retrieval", "vector-stats", "delete", "reset"
             }
             if cmd not in VALID_COMMANDS:
@@ -141,6 +164,8 @@ def main():
                 break
                 
             elif cmd == "sync":
+                import time
+                start_time = time.perf_counter()
                 if arg == "--rebuild":
                     print("Performing full rebuild reset...")
                     # 1. Reset
@@ -157,7 +182,9 @@ def main():
                     # 3. Index & Build Graph
                     run_reindexing()
                     GraphStore().extract_and_sync_graph()
-                    print("\nRebuild complete.")
+                    duration = time.perf_counter() - start_time
+                    print(f"\nRebuild complete. Total Duration: {duration:.2f}s")
+                    logging.getLogger("main").info(f"Full rebuild completed in {duration:.2f}s")
                 else:
                     sync_github()
                     sync_gmail()
@@ -165,7 +192,9 @@ def main():
                     # Reindex new content
                     run_reindexing()
                     GraphStore().extract_and_sync_graph()
-                    print("\nSync complete.")
+                    duration = time.perf_counter() - start_time
+                    print(f"\nSync complete. Total Duration: {duration:.2f}s")
+                    logging.getLogger("main").info(f"Sync completed in {duration:.2f}s")
                 
             elif cmd == "stats":
                 repos = get_repo_count()
@@ -478,6 +507,70 @@ def main():
                 print(f"Embedding Model: {stats['embedding_model']}")
                 print(f"Collection Exists: {stats['exists']}")
                 print("========================================")
+
+            elif cmd == "graph":
+                if not arg:
+                    print("Usage: graph <repository_name>")
+                else:
+                    g = GraphStore()
+                    rels = g.get_node_relationships("Repository", arg)
+                    print("========================================")
+                    print(f"GRAPH RELATIONSHIPS FOR REPOSITORY: {arg}")
+                    print("========================================")
+                    if not rels:
+                        print("No relationships found.")
+                    else:
+                        for r in sorted(rels):
+                            print(f"- {r}")
+                    print("========================================")
+
+            elif cmd == "graph-tech":
+                if not arg:
+                    print("Usage: graph-tech <technology_name>")
+                else:
+                    g = GraphStore()
+                    rels = g.get_node_relationships("Technology", arg)
+                    print("========================================")
+                    print(f"GRAPH RELATIONSHIPS FOR TECHNOLOGY: {arg}")
+                    print("========================================")
+                    if not rels:
+                        print("No relationships found.")
+                    else:
+                        for r in sorted(rels):
+                            print(f"- {r}")
+                    print("========================================")
+
+            elif cmd == "graph-person":
+                if not arg:
+                    print("Usage: graph-person <person_name>")
+                else:
+                    g = GraphStore()
+                    rels = g.get_node_relationships("User", arg)
+                    print("========================================")
+                    print(f"GRAPH RELATIONSHIPS FOR PERSON: {arg}")
+                    print("========================================")
+                    if not rels:
+                        print("No relationships found.")
+                    else:
+                        for r in sorted(rels):
+                            print(f"- {r}")
+                    print("========================================")
+
+            elif cmd == "relations":
+                if not arg:
+                    print("Usage: relations <entity_name>")
+                else:
+                    g = GraphStore()
+                    rels = g.lookup_relationships(arg)
+                    print("========================================")
+                    print(f"GRAPH RELATIONSHIPS FOR ENTITY: {arg}")
+                    print("========================================")
+                    if not rels:
+                        print("No relationships found.")
+                    else:
+                        for r in sorted(rels):
+                            print(f"- {r}")
+                    print("========================================")
 
             elif cmd == "delete":
                 if not arg or not arg.startswith("--before"):

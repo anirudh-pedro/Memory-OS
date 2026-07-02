@@ -183,60 +183,6 @@ def clear_all():
     conn.commit()
     conn.close()
 
-def search_local_knowledge(query: str) -> dict:
-    conn = get_connection()
-    cursor = conn.cursor()
-    q = f"%{query.lower()}%"
-    
-    # Search Repositories
-    cursor.execute(
-        """
-        SELECT repo_name, language, description 
-        FROM repositories 
-        WHERE LOWER(repo_name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(language) LIKE ?
-        """,
-        (q, q, q)
-    )
-    repos = [
-        {"repo_name": row[0], "language": row[1], "description": row[2]}
-        for row in cursor.fetchall()
-    ]
-    
-    # Search Documents
-    cursor.execute(
-        """
-        SELECT repo_name, file_name, content 
-        FROM repository_documents 
-        WHERE LOWER(file_name) LIKE ? OR LOWER(content) LIKE ?
-        """,
-        (q, q)
-    )
-    docs = [
-        {"repo_name": row[0], "file_name": row[1], "content": row[2]}
-        for row in cursor.fetchall()
-    ]
-    
-    # Search Emails
-    cursor.execute(
-        """
-        SELECT subject, sender, snippet 
-        FROM emails 
-        WHERE LOWER(subject) LIKE ? OR LOWER(sender) LIKE ? OR LOWER(snippet) LIKE ?
-        """,
-        (q, q, q)
-    )
-    emails = [
-        {"subject": row[0], "sender": row[1], "snippet": row[2]}
-        for row in cursor.fetchall()
-    ]
-    
-    conn.close()
-    return {
-        "repositories": repos,
-        "documents": docs,
-        "emails": emails
-    }
-
 def search_local_knowledge_ranked(query: str, repo_filter: str = None) -> list:
     """Ranked search across repositories, documents, and emails.
 
@@ -361,36 +307,6 @@ def get_repository_readme(repo_name: str) -> str:
     readme = row[0] if row else None
     conn.close()
     return readme
-
-def get_repository_summary_data(repo_name: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT repo_name, language, stars, forks, updated_at FROM repositories WHERE LOWER(repo_name) = LOWER(?)",
-        (repo_name,)
-    )
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return None
-    
-    matched_name = row[0]
-    cursor.execute(
-        "SELECT file_name FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)",
-        (repo_name,)
-    )
-    files = [r[0] for r in cursor.fetchall()]
-    conn.close()
-    
-    return {
-        "repo_name": matched_name,
-        "language": row[1],
-        "stars": row[2],
-        "forks": row[3],
-        "updated_at": row[4],
-        "documents_count": len(files),
-        "files": files
-    }
 
 def get_all_repositories() -> list:
     conn = get_connection()

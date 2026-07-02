@@ -88,6 +88,13 @@ def query_llm_with_retry(messages: list, model: str = None, max_retries: int = 3
     return ""
 
 def run_hybrid_rag(question: str) -> dict:
+    import time
+    import logging
+    logger = logging.getLogger("llm")
+    
+    logger.info(f"Starting RAG pipeline for question: '{question}'")
+    start_time = time.perf_counter()
+    
     # 1. Retrieve hybrid search results (includes base semantic + SQLite)
     # We pass the question directly as query
     search_results = hybrid_search(question, source_filter=None)
@@ -153,6 +160,9 @@ def run_hybrid_rag(question: str) -> dict:
     
     # If context is completely empty, fail early to prevent hallucination
     if not merged_context.strip():
+        logger.info("Empty RAG context. Skipping LLM query.")
+        duration = time.perf_counter() - start_time
+        print(f"Total RAG Pipeline Duration: {duration:.2f}s")
         return {
             "answer": "I couldn't find that information in the indexed knowledge.",
             "sources": [],
@@ -194,9 +204,14 @@ def run_hybrid_rag(question: str) -> dict:
     ]
 
     try:
+        llm_start = time.perf_counter()
         answer = query_llm_with_retry(messages).strip()
+        llm_duration = time.perf_counter() - llm_start
+        logger.info(f"Groq LLM generation finished in {llm_duration:.2f}s")
+        print(f"LLM Generation Duration: {llm_duration:.2f}s")
     except Exception as e:
         answer = f"Error communicating with Groq: {e}"
+        logger.error(f"Groq LLM generation failed: {e}")
 
     # Calculate basic confidence based on whether the standard fallback text is returned
     confidence = 0.9
@@ -244,6 +259,10 @@ def run_hybrid_rag(question: str) -> dict:
             sources = sorted(list(set(parsed_sources)))
         if parsed_repos:
             repos = sorted(list(set(parsed_repos)))
+
+    total_duration = time.perf_counter() - start_time
+    logger.info(f"RAG pipeline complete for question: '{question}' in {total_duration:.2f}s")
+    print(f"Total RAG Pipeline Duration: {total_duration:.2f}s")
 
     return {
         "answer": answer,

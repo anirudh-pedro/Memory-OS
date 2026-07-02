@@ -7,7 +7,6 @@ from core.embedder import Embedder
 from core.chunker import generate_and_save_chunks
 from storage.db import (
     get_all_document_chunks,
-    get_document_chunk_count,
     get_repository_document_count
 )
 
@@ -86,13 +85,25 @@ def upload_chunks_to_qdrant(client: QdrantClient, chunks: list, embeddings: list
             )
 
 def run_reindexing():
+    import time
+    import logging
+    logger = logging.getLogger("vector_store")
+    
+    logger.info("Starting reindexing process...")
+    start_time = time.perf_counter()
+    
     # 1. Generate and save SQLite chunks
+    logger.info("Generating SQLite chunks...")
+    chunk_start = time.perf_counter()
     generate_and_save_chunks()
+    logger.info(f"Generated SQLite chunks in {time.perf_counter() - chunk_start:.2f}s")
     
     # 2. Load chunks
     chunks = get_all_document_chunks()
     if not chunks:
         # Return empty summary if no content
+        duration = time.perf_counter() - start_time
+        logger.info(f"Reindexing process finished with 0 chunks in {duration:.2f}s")
         return {
             "documents": get_repository_document_count(),
             "chunks": 0,
@@ -102,14 +113,27 @@ def run_reindexing():
         }
     
     # 3. Generate embeddings
+    logger.info(f"Generating embeddings for {len(chunks)} chunks...")
+    embed_start = time.perf_counter()
     embedder = Embedder()
     texts = [c["chunk_text"] for c in chunks]
     embeddings = embedder.embed_documents(texts)
+    embed_duration = time.perf_counter() - embed_start
+    logger.info(f"Embedding generation complete for {len(chunks)} chunks in {embed_duration:.2f}s")
+    print(f"Embedding Generation Duration: {embed_duration:.2f}s")
     
     # 4. Recreate collection and upload
+    logger.info("Uploading vectors to Qdrant...")
+    upload_start = time.perf_counter()
     client = get_qdrant_client()
     init_qdrant_collection(client, force_recreate=True)
     upload_chunks_to_qdrant(client, chunks, embeddings)
+    upload_duration = time.perf_counter() - upload_start
+    logger.info(f"Vector upload complete for {len(chunks)} vectors in {upload_duration:.2f}s")
+    print(f"Vector Upload Duration: {upload_duration:.2f}s")
+    
+    total_duration = time.perf_counter() - start_time
+    logger.info(f"Reindexing process complete in {total_duration:.2f}s")
         
     return {
         "documents": get_repository_document_count(),
@@ -120,6 +144,7 @@ def run_reindexing():
     }
 
 def get_vector_index_stats() -> dict:
+    """Retrieve general metrics and configuration about the Qdrant vector index collection."""
     client = get_qdrant_client()
     try:
         collection_info = client.get_collection(COLLECTION_NAME)
@@ -137,6 +162,7 @@ def get_vector_index_stats() -> dict:
             "embedding_model": "all-MiniLM-L6-v2",
             "exists": True
         }
+    
     except Exception:
         return {
             "collection": COLLECTION_NAME,
@@ -197,6 +223,7 @@ def count_vector_chunks(repo_name: str) -> int:
         return 0
 
 def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, raw_scores: bool = False, repo_filter: str = None) -> list:
+    """Perform raw vector search on the Qdrant database, with optional source and repository filters."""
     embedder = Embedder()
     vector = embedder.embed_query(query)
     
@@ -347,6 +374,13 @@ def detect_repo_in_query(query: str) -> str:
     return None
 
 def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None) -> list:
+    import time
+    import logging
+    logger = logging.getLogger("vector_store")
+    
+    logger.info(f"Starting hybrid retrieval for query: '{query}'")
+    start_time = time.perf_counter()
+    
     from storage.db import search_local_knowledge_ranked
     
     if not repo_filter:
@@ -357,6 +391,15 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
     
     # 2. Run semantic search
     semantic_results = run_semantic_search(query, limit=20, source_filter=source_filter, raw_scores=True, repo_filter=repo_filter)
+    
+    # 3. Run graph search to check for graph relevance
+    try:
+        from storage.graph import GraphStore
+        graph = GraphStore()
+        graph_results = graph.lookup_relationships(query)
+    except Exception as e:
+        logger.error(f"Graph lookup failed during hybrid search: {e}")
+        graph_results = []
     
     # Create candidate map to merge results
     candidates = {}
@@ -472,7 +515,21 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
         file_name = cand.get("file_name") or ""
         readme_bonus_val = 1.0 if "readme" in file_name.lower() else 0.0
         
-        # 3. keyword_match (score = 1.0 if any query term is found in content)
+        # 3. graph_relevance (score = 1.0 if the candidate references any entity found in graph lookup)
+        graph_relevance_val = 0.0
+        if graph_results:
+            for rel_desc in graph_results:
+                if repo_name and repo_name.lower() in rel_desc.lower():
+                    graph_relevance_val = 1.0
+                    break
+                if file_name and file_name.lower() in rel_desc.lower():
+                    graph_relevance_val = 1.0
+                    break
+                if cand["type"] == "email" and cand.get("subject") and cand["subject"].lower() in rel_desc.lower():
+                    graph_relevance_val = 1.0
+                    break
+        
+        # 4. keyword_match (score = 1.0 if any query term is found in content)
         text_to_search = ""
         if cand["type"] == "repository":
             text_to_search = f"{cand.get('repo_name') or ''} {cand.get('description') or ''}"
@@ -484,11 +541,12 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
         text_to_search_lower = text_to_search.lower()
         keyword_match_val = 1.0 if any(term in text_to_search_lower for term in query_terms) else 0.0
         
-        # Calculate final hybrid score
+        # Calculate final hybrid score incorporating graph relevance (preferred hierarchy)
         final_score = round(
-            (0.65 * sim) + 
-            (0.20 * repo_match_val) + 
+            (0.60 * sim) + 
+            (0.15 * repo_match_val) + 
             (0.10 * readme_bonus_val) + 
+            (0.10 * graph_relevance_val) + 
             (0.05 * keyword_match_val),
             4
         )
@@ -502,4 +560,8 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
         
     # Re-sort ranked results
     results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
+    
+    duration = time.perf_counter() - start_time
+    logger.info(f"Hybrid retrieval finished for query: '{query}'. Retrieved {len(results)} items in {duration:.4f}s")
+    print(f"Retrieval Duration: {duration:.4f}s")
     return results
