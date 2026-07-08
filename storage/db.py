@@ -5,9 +5,11 @@ DB_PATH = "memory.db"
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    db_path = os.getenv("MEMORY_OS_DB_PATH", DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     conn = get_connection()
@@ -193,13 +195,29 @@ def search_local_knowledge_ranked(query: str, repo_filter: str = None) -> list:
     cursor = conn.cursor()
 
     if repo_filter:
-        cursor.execute("SELECT repo_name, language, description FROM repositories WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
-        repos = cursor.fetchall()
+        if isinstance(repo_filter, list):
+            placeholders = ",".join(["?"] * len(repo_filter))
+            cursor.execute(
+                f"SELECT repo_name, language, description FROM repositories WHERE LOWER(repo_name) IN ({placeholders})",
+                [r.lower() for r in repo_filter]
+            )
+            repos = cursor.fetchall()
 
-        cursor.execute("SELECT repo_name, file_name, content FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
-        docs = cursor.fetchall()
+            cursor.execute(
+                f"SELECT repo_name, file_name, content FROM repository_documents WHERE LOWER(repo_name) IN ({placeholders})",
+                [r.lower() for r in repo_filter]
+            )
+            docs = cursor.fetchall()
+            
+            emails = []
+        else:
+            cursor.execute("SELECT repo_name, language, description FROM repositories WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
+            repos = cursor.fetchall()
 
-        emails = []
+            cursor.execute("SELECT repo_name, file_name, content FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)", (repo_filter,))
+            docs = cursor.fetchall()
+
+            emails = []
     else:
         # Fetch all data for scoring
         cursor.execute("SELECT repo_name, language, description FROM repositories")

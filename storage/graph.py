@@ -196,7 +196,7 @@ class GraphStore:
                 descriptions.append(desc)
         return list(set(descriptions))
 
-    def extract_and_sync_graph(self):
+    def extract_and_sync_graph(self, repo_names=None):
         """Extract entities and relationships from SQLite and sync them to Neo4j/Fallback Graph."""
         import time
         import logging
@@ -206,14 +206,59 @@ class GraphStore:
         start_time = time.perf_counter()
         
         print("Extracting entities and relationships to Graph...")
-        self.clear_graph()
         
+        if repo_names is None:
+            self.clear_graph()
+        else:
+            # Incremental clear
+            for r_name in repo_names:
+                if r_name == "__emails__":
+                    if self.is_fallback:
+                        from storage.db import get_connection
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM graph_relationships WHERE source_id LIKE 'Email:%' OR target_id LIKE 'Email:%' OR source_id LIKE 'User:%' OR target_id LIKE 'User:%'")
+                        cursor.execute("DELETE FROM graph_nodes WHERE label IN ('Email', 'User')")
+                        conn.commit()
+                        conn.close()
+                    else:
+                        with self.driver.session() as session:
+                            session.run("MATCH (e:Email) DETACH DELETE e")
+                            session.run("MATCH (u:User) DETACH DELETE u")
+                else:
+                    repo_prefix = f"Document:{r_name}:"
+                    repo_node_id = f"Repository:{r_name}"
+                    if self.is_fallback:
+                        from storage.db import get_connection
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "DELETE FROM graph_relationships WHERE source_id = ? OR target_id = ? OR source_id LIKE ? OR target_id LIKE ?",
+                            (repo_node_id, repo_node_id, f"{repo_prefix}%", f"{repo_prefix}%")
+                        )
+                        cursor.execute(
+                            "DELETE FROM graph_nodes WHERE id = ? OR id LIKE ?",
+                            (repo_node_id, f"{repo_prefix}%")
+                        )
+                        conn.commit()
+                        conn.close()
+                    else:
+                        with self.driver.session() as session:
+                            session.run("MATCH (r:Repository {id: $repo_id}) DETACH DELETE r", repo_id=repo_node_id)
+                            session.run("MATCH (d:Document) WHERE d.id STARTS WITH $prefix DETACH DELETE d", prefix=repo_prefix)
+
         node_count = 0
         rel_count = 0
 
+        # Determine repos to sync
+        if repo_names is None:
+            repos_to_sync = get_all_repositories()
+        else:
+            all_repos = get_all_repositories()
+            repos_to_sync = [r for r in all_repos if r["repo_name"] in repo_names]
+
         # 1. Repositories and detected technologies
-        repos = get_all_repositories()
-        for repo in repos:
+        for repo in repos_to_sync:
             repo_name = repo["repo_name"]
             repo_node_id = f"Repository:{repo_name}"
             self.insert_node(repo_node_id, "Repository", repo_name)
@@ -232,8 +277,13 @@ class GraphStore:
                 rel_count += 1
 
         # 2. Documents inside repositories
-        docs = get_all_documents()
-        for doc in docs:
+        if repo_names is None:
+            docs_to_sync = get_all_documents()
+        else:
+            all_docs = get_all_documents()
+            docs_to_sync = [d for d in all_docs if d["repo_name"] in repo_names]
+
+        for doc in docs_to_sync:
             repo_name = doc["repo_name"]
             file_name = doc["file_name"]
             
@@ -248,24 +298,25 @@ class GraphStore:
             rel_count += 1
 
         # 3. Emails and senders
-        emails = get_all_emails()
-        for email in emails:
-            subject = email["subject"] or "No Subject"
-            sender = email["sender"] or "Unknown Sender"
-            message_id = email["message_id"] or ""
-            
-            email_node_id = f"Email:{message_id}"
-            self.insert_node(email_node_id, "Email", subject)
-            node_count += 1
-            
-            user_node_id = f"User:{sender}"
-            self.insert_node(user_node_id, "User", sender)
-            node_count += 1
-            
-            # Relationship SENT_BY
-            rel_id = f"{message_id}-SENT_BY-{sender}"
-            self.insert_relationship(rel_id, email_node_id, "Email", user_node_id, "User", "SENT_BY")
-            rel_count += 1
+        if repo_names is None or "__emails__" in repo_names:
+            emails = get_all_emails()
+            for email in emails:
+                subject = email["subject"] or "No Subject"
+                sender = email["sender"] or "Unknown Sender"
+                message_id = email["message_id"] or ""
+                
+                email_node_id = f"Email:{message_id}"
+                self.insert_node(email_node_id, "Email", subject)
+                node_count += 1
+                
+                user_node_id = f"User:{sender}"
+                self.insert_node(user_node_id, "User", sender)
+                node_count += 1
+                
+                # Relationship SENT_BY
+                rel_id = f"{message_id}-SENT_BY-{sender}"
+                self.insert_relationship(rel_id, email_node_id, "Email", user_node_id, "User", "SENT_BY")
+                rel_count += 1
 
         duration = time.perf_counter() - start_time
         target_db = "SQLite Fallback" if self.is_fallback else "Neo4j"

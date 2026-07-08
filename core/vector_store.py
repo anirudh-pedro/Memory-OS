@@ -17,8 +17,14 @@ _qdrant_client = None
 def get_qdrant_client() -> QdrantClient:
     global _qdrant_client
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(path="qdrant_storage")
+        url = os.getenv("QDRANT_URL")
+        if url:
+            _qdrant_client = QdrantClient(url=url)
+        else:
+            path = os.getenv("MEMORY_OS_QDRANT_PATH", "qdrant_storage")
+            _qdrant_client = QdrantClient(path=path)
     return _qdrant_client
+
 
 def close_qdrant_client():
     global _qdrant_client
@@ -84,9 +90,10 @@ def upload_chunks_to_qdrant(client: QdrantClient, chunks: list, embeddings: list
                 points=batch
             )
 
-def run_reindexing():
+def run_reindexing(repo_names=None):
     import time
     import logging
+    from storage.db import get_connection
     logger = logging.getLogger("vector_store")
     
     logger.info("Starting reindexing process...")
@@ -95,11 +102,58 @@ def run_reindexing():
     # 1. Generate and save SQLite chunks
     logger.info("Generating SQLite chunks...")
     chunk_start = time.perf_counter()
-    generate_and_save_chunks()
+    generate_and_save_chunks(repo_names)
     logger.info(f"Generated SQLite chunks in {time.perf_counter() - chunk_start:.2f}s")
     
-    # 2. Load chunks
-    chunks = get_all_document_chunks()
+    # 2. Connect client
+    client = get_qdrant_client()
+    
+    if repo_names is None:
+        # Full rebuild
+        chunks = get_all_document_chunks()
+    else:
+        # Incremental rebuild: clear specific points in Qdrant and query only those chunks
+        for r_name in repo_names:
+            if r_name == "__emails__":
+                client.delete(
+                    collection_name=COLLECTION_NAME,
+                    points_selector=models.Filter(
+                        must=[models.FieldCondition(key="source_type", match=models.MatchValue(value="email"))]
+                    )
+                )
+            else:
+                client.delete(
+                    collection_name=COLLECTION_NAME,
+                    points_selector=models.Filter(
+                        must=[models.FieldCondition(key="repository_name", match=models.MatchValue(value=r_name))]
+                    )
+                )
+        
+        # Load only the updated chunks from SQLite
+        conn = get_connection()
+        cursor = conn.cursor()
+        chunks = []
+        for r_name in repo_names:
+            if r_name == "__emails__":
+                cursor.execute(
+                    "SELECT id, repository_name, document_name, source_type, chunk_text, chunk_index FROM document_chunks WHERE source_type = 'email'"
+                )
+            else:
+                cursor.execute(
+                    "SELECT id, repository_name, document_name, source_type, chunk_text, chunk_index FROM document_chunks WHERE repository_name = ?",
+                    (r_name,)
+                )
+            for row in cursor.fetchall():
+                chunks.append({
+                    "id": row[0],
+                    "repository_name": row[1],
+                    "document_name": row[2],
+                    "source_type": row[3],
+                    "chunk_text": row[4],
+                    "chunk_index": row[5]
+                })
+        conn.close()
+        
     if not chunks:
         # Return empty summary if no content
         duration = time.perf_counter() - start_time
@@ -122,11 +176,11 @@ def run_reindexing():
     logger.info(f"Embedding generation complete for {len(chunks)} chunks in {embed_duration:.2f}s")
     print(f"Embedding Generation Duration: {embed_duration:.2f}s")
     
-    # 4. Recreate collection and upload
+    # 4. Recreate collection or insert
     logger.info("Uploading vectors to Qdrant...")
     upload_start = time.perf_counter()
-    client = get_qdrant_client()
-    init_qdrant_collection(client, force_recreate=True)
+    if repo_names is None:
+        init_qdrant_collection(client, force_recreate=True)
     upload_chunks_to_qdrant(client, chunks, embeddings)
     upload_duration = time.perf_counter() - upload_start
     logger.info(f"Vector upload complete for {len(chunks)} vectors in {upload_duration:.2f}s")
@@ -236,12 +290,20 @@ def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, r
             )
         )
     if repo_filter:
-        must_conditions.append(
-            models.FieldCondition(
-                key="repository_name",
-                match=models.MatchValue(value=repo_filter)
+        if isinstance(repo_filter, list):
+            must_conditions.append(
+                models.FieldCondition(
+                    key="repository_name",
+                    match=models.MatchAny(any=repo_filter)
+                )
             )
-        )
+        else:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="repository_name",
+                    match=models.MatchValue(value=repo_filter)
+                )
+            )
         
     query_filter = models.Filter(
         must=must_conditions,

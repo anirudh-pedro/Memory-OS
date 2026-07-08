@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include storage/schema.sql
+recursive-include cli/ *.py
+recursive-include infrastructure/ *.py
+recursive-include connectors/ *.py
+recursive-include core/ *.py
+recursive-include storage/ *.py
+recursive-include models/ *.py
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude *.db
+global-exclude qdrant_storage/
+global-exclude .env
+global-exclude logs/

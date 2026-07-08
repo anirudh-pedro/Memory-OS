@@ -20,6 +20,8 @@ def get_page_title(page: dict) -> str:
         title_text = f"Notion Page {page.get('id')}"
     return title_text
 
+import os
+
 def sync_notion():
     try:
         try:
@@ -29,7 +31,8 @@ def sync_notion():
 
         print("Syncing Notion...\n")
         c = Composio()
-        s = c.create(user_id="user_123")
+        user_id = os.getenv("COMPOSIO_USER_ID", "user_123")
+        s = c.create(user_id=user_id)
 
         # Verify Notion toolkit is active
         toolkits_info = s.toolkits()
@@ -121,3 +124,33 @@ def sync_notion():
 
     except Exception as e:
         print(f"Error during Notion sync: {e}")
+
+
+from connectors.base import BaseConnector
+from connectors.registry import register
+
+@register
+class NotionConnector(BaseConnector):
+    name = "Notion"
+    slug = "notion"
+
+    def authenticate(self) -> bool:
+        try:
+            c = Composio()
+            user_id = os.getenv("COMPOSIO_USER_ID", "user_123")
+            s = c.create(user_id=user_id)
+            toolkits_info = s.toolkits()
+            tk = next((t for t in toolkits_info.items if t.slug == "notion"), None)
+            return bool(tk and tk.connection and tk.connection.is_active)
+        except Exception:
+            return False
+
+    def sync(self) -> dict:
+        sync_notion()
+        return {"status": "success"}
+
+    def health(self) -> tuple[bool, str]:
+        if self.authenticate():
+            return True, "Connected"
+        return False, "Not connected"
+

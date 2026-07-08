@@ -44,6 +44,7 @@ def extract_metadata(data: dict):
     
     return repo_name, description, language, visibility, stars, forks, open_issues, default_branch, updated_at, url
 
+import os
 import sys
 
 def sync_github():
@@ -54,7 +55,8 @@ def sync_github():
             pass
             
         c = Composio()
-        s = c.create(user_id="user_123")
+        user_id = os.getenv("COMPOSIO_USER_ID", "user_123")
+        s = c.create(user_id=user_id)
         
         # Verify connection
         toolkits_info = s.toolkits()
@@ -239,3 +241,33 @@ def sync_github():
 
     except Exception as e:
         print(f"Error during GitHub sync: {e}")
+
+
+from connectors.base import BaseConnector
+from connectors.registry import register
+
+@register
+class GitHubConnector(BaseConnector):
+    name = "GitHub"
+    slug = "github"
+
+    def authenticate(self) -> bool:
+        try:
+            c = Composio()
+            user_id = os.getenv("COMPOSIO_USER_ID", "user_123")
+            s = c.create(user_id=user_id)
+            toolkits_info = s.toolkits()
+            tk = next((t for t in toolkits_info.items if t.slug == "github"), None)
+            return bool(tk and tk.connection and tk.connection.is_active)
+        except Exception:
+            return False
+
+    def sync(self) -> dict:
+        sync_github()
+        return {"status": "success"}
+
+    def health(self) -> tuple[bool, str]:
+        if self.authenticate():
+            return True, "Connected"
+        return False, "Not connected"
+

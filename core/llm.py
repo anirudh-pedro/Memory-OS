@@ -90,87 +90,73 @@ def query_llm_with_retry(messages: list, model: str = None, max_retries: int = 3
 def run_hybrid_rag(question: str) -> dict:
     import time
     import logging
+    import re
     logger = logging.getLogger("llm")
     
     logger.info(f"Starting RAG pipeline for question: '{question}'")
     start_time = time.perf_counter()
     
-    # 1. Retrieve hybrid search results (includes base semantic + SQLite)
-    # We pass the question directly as query
-    search_results = hybrid_search(question, source_filter=None)
+    from core.vector_store import run_semantic_search, detect_repo_in_query
+    from storage.db import search_local_knowledge_ranked
+    from core.context_builder import ContextBuilder
     
-    # 2. Neo4j Graph Lookup
+    # 1. Detect single repo mention
+    detected_repo = detect_repo_in_query(question)
+    
+    # 2. Query Classification (Task 1)
+    query_class = ContextBuilder.classify_query(question, detected_repo)
+    
+    # 3. Graph Guided Retrieval Filter (Task 6)
+    repo_filter = detected_repo
+    if query_class == "Technology Question":
+        # Extract tech and query graph for repo list filter
+        known_techs = ["python", "javascript", "typescript", "react", "node", "express", "mongodb", "fastapi", "postgresql", "tailwind", "docker", "kafka", "redis", "plotly", "gemini", "groq", "next.js", "firebase", "sqlite", "neo4j", "qdrant", "composio", "langchain", "sentence-transformer", "sentence-transformers"]
+        query_lower = question.lower()
+        matched_techs = []
+        for tech in known_techs:
+            patterns = [
+                r'\b' + re.escape(tech) + r'\b',
+                r'\b' + re.escape(tech.replace('.', '')) + r'\b',
+                r'\b' + re.escape(tech.replace('-', '')) + r'\b'
+            ]
+            if any(re.search(pat, query_lower) for pat in patterns):
+                matched_techs.append(tech)
+                
+        graph_repos = []
+        if matched_techs:
+            try:
+                graph = GraphStore()
+                for tech in matched_techs:
+                    rels = graph.lookup_relationships(tech)
+                    for r in rels:
+                        if "Repository '" in r:
+                            parts = r.split("Repository '")
+                            if len(parts) > 1:
+                                repo_name = parts[1].split("'")[0]
+                                graph_repos.append(repo_name)
+            except Exception as e:
+                logger.error(f"Graph guided filtering query failed: {e}")
+                
+        if graph_repos:
+            repo_filter = list(set(graph_repos))
+            
+    # 4. Perform Retrieval
+    # Raw vector results from Qdrant
+    vector_results = run_semantic_search(question, limit=20, source_filter=None, raw_scores=True, repo_filter=repo_filter)
+    
+    # Raw keyword results from SQLite
+    keyword_results = search_local_knowledge_ranked(question, repo_filter=repo_filter)
+    
+    # Neo4j Graph Lookup
     graph = GraphStore()
     graph_results = graph.lookup_relationships(question)
     
-    # Build RAG Context
-    context_chunks = []
-    sources = []
-    repos = []
+    # 5. Context Builder logic (Task 3, 4, 5)
+    builder = ContextBuilder()
+    formatted_chunks, sources, repos, num_vector, num_keyword, num_graph, after_dedup = builder.build_context(
+        question, vector_results, keyword_results, graph_results, repo_filter=repo_filter, query_class=query_class
+    )
     
-    # Extract top search results
-    top_search_results = search_results[:6]
-    for idx, item in enumerate(top_search_results):
-        t = item["type"]
-        if t == "repository":
-            repo_name = item["repo_name"]
-            repos.append(repo_name)
-            sources.append(f"Repository metadata for '{repo_name}'")
-            context_chunks.append(
-                f"Repository: {repo_name}\n"
-                f"Description: {item.get('description') or ''}\n"
-                f"Language: {item.get('language') or ''}"
-            )
-        elif t == "document":
-            repo_name = item["repo_name"]
-            file_name = item["file_name"]
-            repos.append(repo_name)
-            sources.append(f"{repo_name}/{file_name}")
-            context_chunks.append(
-                f"Repository: {repo_name}\n"
-                f"Document: {file_name}\n"
-                f"Content: {item.get('content') or ''}"
-            )
-        elif t == "email":
-            subject = item["subject"]
-            sender = item["sender"]
-            sources.append(f"Email: {subject}")
-            context_chunks.append(
-                f"Email Subject: {subject}\n"
-                f"From: {sender}\n"
-                f"Content Snippet: {item.get('snippet') or ''}"
-            )
-
-    # Extract Graph Context
-    for rel_desc in graph_results[:10]:
-        context_chunks.append(f"Knowledge Graph Relationship: {rel_desc}")
-        # Parse repositories from graph relationship if possible
-        if "Repository '" in rel_desc:
-            parts = rel_desc.split("Repository '")
-            if len(parts) > 1:
-                r_name = parts[1].split("'")[0]
-                repos.append(r_name)
-        sources.append("Knowledge Graph")
-
-    # Clean duplicates
-    sources = sorted(list(set(sources)))
-    repos = sorted(list(set(repos)))
-    
-    merged_context = "\n\n".join(context_chunks)
-    
-    # If context is completely empty, fail early to prevent hallucination
-    if not merged_context.strip():
-        logger.info("Empty RAG context. Skipping LLM query.")
-        duration = time.perf_counter() - start_time
-        print(f"Total RAG Pipeline Duration: {duration:.2f}s")
-        return {
-            "answer": "I couldn't find that information in the indexed knowledge.",
-            "sources": [],
-            "repositories": [],
-            "confidence": 0.0
-        }
-
-    # Enforce strict system prompt instructions
     system_prompt = (
         "You are an assistant answering ONLY from the supplied retrieved context.\n\n"
         "Never use external knowledge.\n\n"
@@ -186,21 +172,64 @@ def run_hybrid_rag(question: str) -> dict:
         "Repositories Used"
     )
     
-    user_prompt = (
-        f"Retrieved Context:\n"
-        f"---------------------\n"
-        f"{merged_context}\n"
-        f"---------------------\n\n"
+    user_prompt_template = (
+        "Retrieved Context:\n"
+        "---------------------\n"
+        "{context}\n"
+        "---------------------\n\n"
         f"Question: {question}\n\n"
         "Format the output strictly as:\n"
         "Answer: [Provide the answer here]\n"
         "Sources: [Provide the sources here]\n"
         "Repositories Used: [Provide the repositories here]"
     )
+    
+    # Trim lowest ranked chunks if overall prompt exceeds token limits
+    merged_context, final_chunks_count = builder.trim_context_to_limit(
+        system_prompt, user_prompt_template, formatted_chunks
+    )
+    
+    total_chars = len(merged_context)
+    est_prompt_tokens = builder.estimate_tokens(system_prompt + user_prompt_template.replace("{context}", merged_context))
+    
+    # Print Retrieval Diagnostics in exact required format (Task 7)
+    repo_filter_str = str(repo_filter) if repo_filter else "None"
+    print("========================================")
+    print("QUERY CLASS")
+    print(query_class)
+    print("Repository Filter")
+    print(repo_filter_str)
+    print("Vector Candidates")
+    print(num_vector)
+    print("Keyword Candidates")
+    print(num_keyword)
+    print("Graph Candidates")
+    print(num_graph)
+    print("After Deduplication")
+    print(after_dedup)
+    print("Final Context Chunks")
+    print(final_chunks_count)
+    print("Context Characters")
+    print(total_chars)
+    print("Estimated Tokens")
+    print(est_prompt_tokens)
+    print("========================================")
+    
+    # If context is completely empty, fail early to prevent hallucination
+    if not merged_context.strip():
+        logger.info("Empty RAG context. Skipping LLM query.")
+        duration = time.perf_counter() - start_time
+        print(f"Total RAG Pipeline Duration: {duration:.2f}s")
+        return {
+            "answer": "I couldn't find that information in the indexed knowledge.",
+            "sources": [],
+            "repositories": [],
+            "confidence": 0.0
+        }
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
+        {"role": "user", "content": user_prompt_template.replace("{context}", merged_context)}
     ]
 
     try:
