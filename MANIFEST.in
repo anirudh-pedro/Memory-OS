@@ -13,3 +13,8 @@ global-exclude *.db
 global-exclude qdrant_storage/
 global-exclude .env
 global-exclude logs/
+prune clean_env
+prune .venv
+global-exclude clean_env/*
+global-exclude .venv/*
+

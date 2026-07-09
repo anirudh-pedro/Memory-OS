@@ -55,20 +55,36 @@ def execute(args):
 
     docker_ok, docker_ver = check_docker_installed()
     if not docker_ok:
-        print("❌ Docker is not installed or not in PATH.")
+        print("----------------------------------")
+        print("Docker is not installed or not in PATH.")
+        print("")
+        print("Please install Docker Desktop and rerun:")
+        print("memory-os init")
+        print("----------------------------------")
         sys.exit(1)
     print(f"  ✓ Docker: {docker_ver}")
 
     compose_ok, compose_ver = check_docker_compose_installed()
     if not compose_ok:
-        print("❌ Docker Compose is not installed.")
+        print("----------------------------------")
+        print("Docker Compose is not installed.")
+        print("")
+        print("Please install Docker Compose and rerun:")
+        print("memory-os init")
+        print("----------------------------------")
         sys.exit(1)
     print(f"  ✓ Docker Compose: {compose_ver}")
 
     if not check_docker_running():
-        print("❌ Docker daemon is not running. Please start Docker and retry.")
+        print("----------------------------------")
+        print("Docker Desktop is not running.")
+        print("")
+        print("Start Docker Desktop and rerun:")
+        print("memory-os init")
+        print("----------------------------------")
         sys.exit(1)
     print("  ✓ Docker Daemon: Running")
+
 
     # 2. Workspace Tree Setup
     print("\n[2/7] Creating workspace directories...")

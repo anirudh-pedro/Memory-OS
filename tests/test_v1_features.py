@@ -134,31 +134,41 @@ class TestExportImportSubsystem(unittest.TestCase):
     @patch("cli.commands.import_cmd.compose_up")
     @patch("cli.commands.import_cmd.wait_for_services", return_value=True)
     def test_export_import_flow(self, mock_wait, mock_up, mock_stop, mock_input):
-        from infrastructure.workspace import create_profile, set_active_profile
-        create_profile("default")
-        set_active_profile("default")
+        from infrastructure.workspace import create_profile, set_active_profile, delete_profile
+        try:
+            create_profile("test_exp_imp_p")
+        except FileExistsError:
+            pass
+        set_active_profile("test_exp_imp_p")
         
-        with tempfile.TemporaryDirectory() as tmpdir:
-            zip_path = Path(tmpdir) / "test_export.zip"
-            
-            # 1. Export Mock execution
-            from cli.commands.export import execute as run_export
-            args = MagicMock()
-            args.file = str(zip_path)
-            run_export(args)
-            
-            self.assertTrue(zip_path.exists())
-
-            # Verify contents
-            with zipfile.ZipFile(zip_path, "r") as zipf:
-                self.assertIn("metadata.json", zipf.namelist())
-                self.assertIn("config.toml", zipf.namelist())
-
-            # 2. Import Mock execution
-            from cli.commands.import_cmd import execute as run_import
-            args_import = MagicMock()
-            args_import.file = str(zip_path)
-            run_import(args_import)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zip_path = Path(tmpdir) / "test_export.zip"
+                
+                # 1. Export Mock execution
+                from cli.commands.export import execute as run_export
+                args = MagicMock()
+                args.file = str(zip_path)
+                run_export(args)
+                
+                self.assertTrue(zip_path.exists())
+    
+                # Verify contents
+                with zipfile.ZipFile(zip_path, "r") as zipf:
+                    self.assertIn("metadata.json", zipf.namelist())
+                    self.assertIn("config.toml", zipf.namelist())
+    
+                # 2. Import Mock execution
+                from cli.commands.import_cmd import execute as run_import
+                args_import = MagicMock()
+                args_import.file = str(zip_path)
+                run_import(args_import)
+        finally:
+            try:
+                set_active_profile("default")
+                delete_profile("test_exp_imp_p")
+            except Exception:
+                pass
 
 
 class TestDoctorDiagnostics(unittest.TestCase):

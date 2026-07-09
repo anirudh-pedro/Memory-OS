@@ -8,7 +8,13 @@ from infrastructure.observability import get_performance_summary
 
 
 def execute(args):
-    """Run the monitor command."""
+    """Run the status command."""
+    from storage.db import init_db
+    try:
+        init_db()
+    except Exception:
+        pass
+
     print("──────────────────────────────────────────────────")
     print("  Memory-OS Observability Dashboard")
     print("──────────────────────────────────────────────────")

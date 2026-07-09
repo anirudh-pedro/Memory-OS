@@ -4,11 +4,41 @@ import logging
 DB_PATH = "memory.db"
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
+_initialized_dbs = set()
+
 def get_connection():
+    global _initialized_dbs
     db_path = os.getenv("MEMORY_OS_DB_PATH", DB_PATH)
-    conn = sqlite3.connect(db_path)
+    abs_path = os.path.abspath(db_path)
+    
+    # Ensure directory exists
+    parent = os.path.dirname(abs_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    
+    conn = sqlite3.connect(abs_path)
     conn.row_factory = sqlite3.Row
+    
+    if abs_path not in _initialized_dbs:
+        # Check if the schema is initialized (e.g. check if document_chunks table exists)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks'")
+            table_exists = cursor.fetchone()
+        except sqlite3.OperationalError:
+            table_exists = False
+            
+        if not table_exists:
+            _initialized_dbs.add(abs_path)
+            conn.close()
+            init_db()
+            conn = sqlite3.connect(abs_path)
+            conn.row_factory = sqlite3.Row
+        else:
+            _initialized_dbs.add(abs_path)
+            
     return conn
+
 
 
 def init_db():

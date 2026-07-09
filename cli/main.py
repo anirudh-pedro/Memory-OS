@@ -121,13 +121,36 @@ def run_interactive():
     from connectors.gmail import sync_gmail
     from connectors.notion import sync_notion
 
-    init_db()
+    import sqlite3
+    try:
+        init_db()
+    except sqlite3.OperationalError as e:
+        import logging
+        logging.getLogger("repl").exception("Database operational error in REPL startup")
+        print("----------------------------------")
+        print("Workspace not initialized.")
+        print("")
+        print("Run:")
+        print("memory-os init")
+        print("----------------------------------")
+        return
+    except Exception as e:
+        import logging
+        logging.getLogger("repl").exception("Unexpected error in REPL startup database init")
+        print(f"❌ Failed to initialize database: {e}")
+        return
 
     # Load SentenceTransformer model exactly once at startup
-    print("Initializing embedding model...")
-    embedder = Embedder()
-    _ = embedder.model
-    print("System ready.")
+    try:
+        print("Initializing embedding model...")
+        embedder = Embedder()
+        _ = embedder.model
+        print("System ready.")
+    except Exception as e:
+        import logging
+        logging.getLogger("repl").exception("Failed to initialize embedding model in REPL")
+        print(f"⚠️ Warning: Failed to initialize embedding model: {e}")
+        print("Model will download automatically on first query.")
 
     print_menu()
 
@@ -348,7 +371,18 @@ def run_interactive():
             GraphStore().close()
             print("Goodbye!")
             break
+        except sqlite3.OperationalError as e:
+            import logging
+            logging.getLogger("repl").exception("Database operational error in REPL loop")
+            print("----------------------------------")
+            print("Workspace has not been initialized.")
+            print("")
+            print("Run:")
+            print("memory-os init")
+            print("----------------------------------")
         except Exception as e:
+            import logging
+            logging.getLogger("repl").exception("Unexpected error during command execution in REPL")
             print(f"Error during command execution: {e}")
 
 
@@ -434,8 +468,29 @@ def cli_entrypoint():
 
     parser = build_parser()
     args = parser.parse_args()
-    route_command(args)
+    
+    import logging
+    import sqlite3
+    logger = logging.getLogger("cli.main")
+    
+    try:
+        route_command(args)
+    except sqlite3.OperationalError as e:
+        logger.exception("Database operational error occurred")
+        print("----------------------------------")
+        print("Workspace has not been initialized.")
+        print("")
+        print("Run:")
+        print("memory-os init")
+        print("----------------------------------")
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("Unexpected error in command execution")
+        print(f"❌ An unexpected error occurred: {e}")
+        print("Please check logs/memory_os.log for full details.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     cli_entrypoint()
+

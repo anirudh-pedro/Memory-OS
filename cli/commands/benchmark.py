@@ -13,6 +13,12 @@ from core.embedder import Embedder
 
 def execute(args):
     """Run the benchmark command."""
+    from storage.db import init_db
+    try:
+        init_db()
+    except Exception:
+        pass
+
     print("──────────────────────────────────────────────────")
     print("  Memory-OS Performance Benchmark")
     print("──────────────────────────────────────────────────")
@@ -85,7 +91,7 @@ def execute(args):
         try:
             from core.vector_store import hybrid_search
             start = time.perf_counter()
-            hybrid_search("python", limit=5)
+            hybrid_search("python")
             duration = time.perf_counter() - start
             latencies["Hybrid Search"] = f"{duration*1000:.2f} ms"
         except Exception as e:
