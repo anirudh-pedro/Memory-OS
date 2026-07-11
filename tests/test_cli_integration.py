@@ -16,19 +16,48 @@ import os
 import pytest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEST_DB_PATH = os.path.join(PROJECT_ROOT, "tests", "test_integration.db")
+
+
+def setup_module(module):
+    """Set up integration test database."""
+    if os.path.exists(TEST_DB_PATH):
+        try:
+            os.remove(TEST_DB_PATH)
+        except Exception:
+            pass
+    # Temporarily set env path to initialize it
+    os.environ["MEMORY_OS_DB_PATH"] = TEST_DB_PATH
+    from storage.db import init_db
+    init_db()
+
+
+def teardown_module(module):
+    """Clean up integration test database."""
+    if os.path.exists(TEST_DB_PATH):
+        try:
+            os.remove(TEST_DB_PATH)
+        except Exception:
+            pass
 
 
 def run_cli(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run a CLI command via ``uv run`` and return the CompletedProcess."""
     cmd = [sys.executable, "-m", "cli.main", *args]
+    env = {
+        **os.environ,
+        "PYTHONIOENCODING": "utf-8",
+        "MEMORY_OS_DB_PATH": TEST_DB_PATH,
+    }
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         timeout=timeout,
         cwd=PROJECT_ROOT,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        env=env,
     )
+
 
 
 # ─── Entry Point Tests ───────────────────────────────────────────

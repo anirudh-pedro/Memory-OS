@@ -118,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop Docker services (preserves data)",
     )
 
+    # ── restart ────────────────────────────────────────────────
+    subparsers.add_parser(
+        "restart",
+        help="Restart Docker services (Neo4j, Qdrant)",
+    )
+
     # ── version ───────────────────────────────────────────────
     subparsers.add_parser(
         "version",

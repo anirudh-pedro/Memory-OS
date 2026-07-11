@@ -72,6 +72,7 @@ def execute(args):
         print(f"Documents    : 0")
         print(f"Emails       : 0")
         print(f"Vectors      : 0")
+        print(f"Embedding Model : {embedding_model}")
         print("")
         print("Workspace is initialized but contains no indexed data.")
         print("")

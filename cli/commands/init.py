@@ -1,10 +1,7 @@
 """
 Command: memory-os init
 
-Performs first-time setup and onboarding for Memory-OS.
-Provisions the workspace directory structure, creates config.toml,
-spins up Neo4j and Qdrant via docker compose, initializes SQLite,
-pre-warms the embedding model, and launches Composio toolkit OAuth flows.
+Performs first-time setup and onboarding for Memory-OS using ComposeManager.
 """
 
 import sys
@@ -14,10 +11,12 @@ import os
 from pathlib import Path
 from infrastructure.workspace import ensure_workspace, get_db_path
 from infrastructure.config import generate_default_config, save_config, load_config
-from infrastructure.compose import compose_up, wait_for_services
+from infrastructure.compose import ComposeManager, compose_up, wait_for_services
 from infrastructure.health import run_all_checks, check_docker, check_neo4j, check_qdrant
 from storage.db import init_db
 from core.embedder import Embedder
+from infrastructure.docker import check_docker_installed, check_docker_compose_installed, check_docker_running
+
 
 
 def get_input(prompt: str, secret: bool = False, default: str = "") -> str:
@@ -37,14 +36,13 @@ def get_input(prompt: str, secret: bool = False, default: str = "") -> str:
 
 
 def execute(args):
-    """Run the init command."""
+    """Run the init command wizard following the exact 11 steps."""
     print("==================================================")
     print("🧠 MEMORY-OS INITIALIZATION WIZARD")
     print("==================================================")
 
-    # 1. System Dependency Checks
-    print("\n[1/7] Checking system dependencies...")
-    
+    # ── Step 1: Check Python ──────────────────────────────────
+    print("\n[Step 1/11] Checking Python version...")
     python_ok = sys.version_info >= (3, 12)
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     if not python_ok:
@@ -52,6 +50,8 @@ def execute(args):
         sys.exit(1)
     print(f"  ✓ Python version: {py_ver}")
 
+    # ── Step 2: Check Docker daemon ──────────────────────────
+    print("\n[Step 2/11] Checking Docker daemon...")
     docker_ok, docker_detail = check_docker()
     if not docker_ok:
         print("----------------------------------")
@@ -66,21 +66,57 @@ def execute(args):
         sys.exit(1)
     print("  ✓ Docker Daemon: Running")
 
-
-
-    # 2. Workspace Tree Setup
-    print("\n[2/7] Creating workspace directories...")
+    # ── Step 3: Create workspace ─────────────────────────────
+    print("\n[Step 3/11] Creating workspace directories...")
     ensure_workspace("default")
     print("  ✓ Workspace path initialized at ~/.memory-os")
 
-    # 3. Configure API Credentials & Settings
-    print("\n[3/7] Configuring credentials...")
-    neo4j_password = get_input("Set Neo4j database password", secret=True, default="memory_neo")
-    groq_api_key = get_input("Enter Groq API Key", secret=True)
-    composio_api_key = get_input("Enter Composio API Key", secret=True)
+    # ── Step 4: Generate docker-compose.yml ──────────────────
+    print("\n[Step 4/11] Generating docker-compose.yml...")
+    from infrastructure.config import get_config
+    existing_config = get_config()
+    existing_password = existing_config.get("neo4j", {}).get("password") or "memory_neo"
+    
+    manager = ComposeManager()
+    manager.generate_compose(profile="default", password=existing_password)
+    print("  ✓ docker-compose.yml generated at ~/.memory-os/docker-compose.yml")
 
-    # Generate auto Composio User UUID
-    composio_user_id = str(uuid.uuid4())
+    # ── Step 5: Launch Neo4j + Qdrant ─────────────────────────
+    print("\n[Step 5/11] Launching local services (Neo4j, Qdrant)...")
+    neo4j_ok, _ = check_neo4j()
+    qdrant_ok, _ = check_qdrant()
+    if neo4j_ok and qdrant_ok:
+        print("  ✓ Neo4j already running")
+        print("  ✓ Qdrant already running")
+    else:
+        if not manager.up(profile="default"):
+            print("❌ Failed to start docker compose services.")
+            sys.exit(1)
+        print("  ✓ Containers launched.")
+
+    # ── Step 6: Wait until healthy ────────────────────────────
+    print("\n[Step 6/11] Waiting for services to become healthy...")
+    if neo4j_ok and qdrant_ok:
+        print("  ✓ Services are healthy.")
+    else:
+        if not wait_for_services(timeout=60):
+            print("❌ Services failed to start or respond to health checks in time.")
+            sys.exit(1)
+        print("  ✓ Services are healthy.")
+
+    # ── Step 7: Initialize SQLite ─────────────────────────────
+    print("\n[Step 7/11] Initializing SQLite database...")
+    os.environ["MEMORY_OS_DB_PATH"] = str(get_db_path("default"))
+    init_db()
+    print("  ✓ SQLite database schema initialized.")
+
+    # ── Step 8: Configure API Keys ───────────────────────────
+    print("\n[Step 8/11] Configuring API keys & settings...")
+    neo4j_password = get_input("Set Neo4j database password", secret=True, default=existing_password)
+    groq_api_key = get_input("Enter Groq API Key", secret=True, default=existing_config.get("groq", {}).get("api_key", ""))
+    composio_api_key = get_input("Enter Composio API Key", secret=True, default=existing_config.get("composio", {}).get("api_key", ""))
+
+    composio_user_id = existing_config.get("composio", {}).get("user_id") or str(uuid.uuid4())
 
     answers = {
         "neo4j_password": neo4j_password,
@@ -91,57 +127,16 @@ def execute(args):
 
     config_dict = generate_default_config(answers)
     save_config(config_dict)
-    
-    # Force reload config in current process memory
     load_config()
     
-    # Overwrite MEMORY_OS_DB_PATH in environment dynamically to point to the workspace DB
-    os.environ["MEMORY_OS_DB_PATH"] = str(get_db_path("default"))
+    if neo4j_password != existing_password:
+        manager.generate_compose(profile="default", password=neo4j_password)
+        print("  ✓ docker-compose.yml updated with new password.")
 
     print("  ✓ Configuration saved to ~/.memory-os/config.toml")
 
-    # 4. Service Provisioning via Docker Compose
-    print("\n[4/7] Provisioning local services (Neo4j, Qdrant)...")
-    neo4j_ok, _ = check_neo4j()
-    qdrant_ok, _ = check_qdrant()
-
-    if neo4j_ok and qdrant_ok:
-        print("  ✓ Neo4j already running")
-        print("  ✓ Qdrant already running")
-    else:
-        if not compose_up():
-            print("❌ Failed to start docker compose services.")
-            sys.exit(1)
-        print("  ✓ Containers launched. Waiting for services to become healthy...")
-        
-        if not wait_for_services(timeout=60):
-            print("❌ Services failed to start or respond to health checks in time.")
-            sys.exit(1)
-        print("  ✓ Services are healthy.")
-
-
-    # 5. Schema & Database Initialization
-    print("\n[5/7] Initializing SQLite database...")
-    init_db()
-    print("  ✓ SQLite database schema initialized.")
-
-    # 6. Optional Embedding Model Warming
-    print("\n[6/7] Preparing embedding model...")
-    warm_model = get_input("Download and cache embedding model (all-MiniLM-L6-v2) now? (Y/n)", default="y").lower()
-    if warm_model == "y":
-        print("  Downloading model (this may take a minute)...")
-        try:
-            embedder = Embedder()
-            _ = embedder.model
-            print("  ✓ Embedding model cached successfully.")
-        except Exception as e:
-            print(f"  ⚠️ Warning: Failed to cache model during setup: {e}")
-            print("  Model will be downloaded automatically on the first query.")
-    else:
-        print("  Skipped model download.")
-
-    # 7. Optional Composio Integration OAuth
-    print("\n[7/7] Configuring integration connectors...")
+    # ── Step 9: Authenticate Composio ────────────────────────
+    print("\n[Step 9/11] Configuring integration connectors...")
     setup_connectors = get_input("Configure connectors (GitHub, Gmail, Notion) now? (Y/n)", default="y").lower()
     if setup_connectors == "y" and composio_api_key:
         try:
@@ -164,7 +159,6 @@ def execute(args):
                         print(f"  👉 Please open this URL in your browser to complete authentication:\n     {req.redirect_url}")
                         print("  Waiting up to 30 seconds for completion...")
                         try:
-                            # Wait for active connection
                             req.wait_for_connection(timeout=30000)
                             print(f"  ✓ {name} connected successfully!")
                         except Exception:
@@ -176,8 +170,24 @@ def execute(args):
     else:
         print("  Skipped connectors configuration.")
 
-    # Verification Report
-    print("\n==================================================")
+    # ── Step 10: Warm embedding model ─────────────────────────
+    print("\n[Step 10/11] Preparing embedding model...")
+    warm_model = get_input("Download and cache embedding model (all-MiniLM-L6-v2) now? (Y/n)", default="y").lower()
+    if warm_model == "y":
+        print("  Downloading model (this may take a minute)...")
+        try:
+            embedder = Embedder()
+            _ = embedder.model
+            print("  ✓ Embedding model cached successfully.")
+        except Exception as e:
+            print(f"  ⚠️ Warning: Failed to cache model during setup: {e}")
+            print("  Model will be downloaded automatically on the first query.")
+    else:
+        print("  Skipped model download.")
+
+    # ── Step 11: Done ─────────────────────────────────────────
+    print("\n[Step 11/11] Running initial health checks...")
+    print("==================================================")
     print("🏥 RUNNING INITIAL HEALTH CHECKS")
     print("==================================================")
     checks = run_all_checks()

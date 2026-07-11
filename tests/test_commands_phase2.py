@@ -19,7 +19,7 @@ class TestPhase2Commands(unittest.TestCase):
     @patch("cli.commands.init.generate_default_config")
     @patch("cli.commands.init.save_config")
     @patch("cli.commands.init.load_config")
-    @patch("cli.commands.init.compose_up")
+    @patch("cli.commands.init.ComposeManager")
     @patch("cli.commands.init.wait_for_services")
     @patch("cli.commands.init.init_db")
     @patch("cli.commands.init.Embedder")
@@ -30,7 +30,7 @@ class TestPhase2Commands(unittest.TestCase):
         mock_embedder_class,
         mock_init_db,
         mock_wait_for_services,
-        mock_compose_up,
+        mock_compose_manager_class,
         mock_load_config,
         mock_save_config,
         mock_generate_config,
@@ -46,11 +46,15 @@ class TestPhase2Commands(unittest.TestCase):
         mock_neo.return_value = (False, "Offline")
         mock_qdrant.return_value = (False, "Offline")
         
-        # User inputs: Neo4j password, Groq key, Composio key, download model, connect toolkits (mock n for skip)
-        mock_get_input.side_effect = ["memory_neo", "gsk_groq", "ak_composio", "y", "n"]
-        mock_compose_up.return_value = True
-        mock_wait_for_services.return_value = True
+        # User inputs: Neo4j password, Groq key, Composio key, connect connectors (mock n for skip), download model (mock y)
+        mock_get_input.side_effect = ["memory_neo", "gsk_groq", "ak_composio", "n", "y"]
         mock_run_all_checks.return_value = [("SQLite", True, "Healthy"), ("Docker", True, "Healthy")]
+        
+        mock_manager_inst = MagicMock()
+        mock_manager_inst.up.return_value = True
+        mock_compose_manager_class.return_value = mock_manager_inst
+
+        mock_wait_for_services.return_value = True
         
         mock_embedder_inst = MagicMock()
         mock_embedder_class.return_value = mock_embedder_inst
@@ -66,7 +70,8 @@ class TestPhase2Commands(unittest.TestCase):
         mock_ensure_workspace.assert_called_once_with("default")
         mock_generate_config.assert_called_once()
         mock_save_config.assert_called_once()
-        mock_compose_up.assert_called_once()
+        mock_compose_manager_class.assert_called()
+        mock_manager_inst.up.assert_called_once_with(profile="default")
         mock_wait_for_services.assert_called_once_with(timeout=60)
         mock_init_db.assert_called_once()
         mock_embedder_class.assert_called_once()

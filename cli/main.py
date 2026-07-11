@@ -414,6 +414,9 @@ def route_command(args):
     elif command == "stop":
         from cli.commands.stop import execute
         execute(args)
+    elif command == "restart":
+        from cli.commands.restart import execute
+        execute(args)
     elif command == "plugins":
         from cli.commands.plugins import execute
         execute(args)
