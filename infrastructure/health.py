@@ -19,33 +19,67 @@ def check_python() -> tuple[bool, str]:
     return ok, version
 
 
+def check_docker() -> tuple[bool, str]:
+    """Verify Docker daemon availability."""
+    from infrastructure.docker import check_docker_daemon
+    return check_docker_daemon()
+
+
 def check_neo4j() -> tuple[bool, str]:
     """Attempt a Neo4j bolt connection."""
     try:
         from neo4j import GraphDatabase
+        from neo4j.exceptions import AuthError
         uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         user = os.getenv("NEO4J_USER", "neo4j")
         password = os.getenv("NEO4J_PASSWORD", "password")
         driver = GraphDatabase.driver(uri, auth=(user, password))
-        driver.verify_connectivity()
-        driver.close()
-        return True, "Healthy"
+        try:
+            driver.verify_connectivity()
+            driver.close()
+            return True, "Healthy"
+        except AuthError as ae:
+            try:
+                driver.close()
+            except Exception:
+                pass
+            return False, f"Authentication failed: {ae}"
+        except Exception as e:
+            try:
+                driver.close()
+            except Exception:
+                pass
+            return False, f"Unreachable: {e}"
     except Exception as e:
         return False, str(e)
 
 
 def check_qdrant() -> tuple[bool, str]:
-    """Ping the Qdrant HTTP health endpoint."""
+    """Ping the Qdrant HTTP health endpoint and check version compatibility."""
+    import urllib.request
+    import json
     try:
-        import urllib.request
-        port = os.getenv("QDRANT_PORT", "6333")
-        url = f"http://localhost:{port}/healthz"
+        from importlib.metadata import version
+        client_ver = version("qdrant-client")
+    except Exception:
+        client_ver = "1.18.0"
+
+    port = os.getenv("QDRANT_PORT", "6333")
+    url = f"http://localhost:{port}"
+    try:
         req = urllib.request.urlopen(url, timeout=5)
         if req.status == 200:
-            return True, "Healthy"
+            data = json.loads(req.read().decode("utf-8"))
+            server_ver = data.get("version", "unknown")
+            c_parts = client_ver.split(".")[:2]
+            s_parts = server_ver.split(".")[:2]
+            if c_parts == s_parts:
+                return True, "Qdrant version compatible"
+            else:
+                return False, f"Qdrant running, but version mismatch (Client: {client_ver}, Server: {server_ver})"
         return False, f"HTTP {req.status}"
     except Exception as e:
-        return False, str(e)
+        return False, f"Unreachable: {e}"
 
 
 def check_sqlite(db_path: str | None = None) -> tuple[bool, str]:
@@ -68,7 +102,7 @@ def check_sqlite(db_path: str | None = None) -> tuple[bool, str]:
         return False, str(e)
 
 
-def check_groq_api() -> tuple[bool, str]:
+def check_groq() -> tuple[bool, str]:
     """Make a minimal Groq API test call."""
     try:
         from groq import Groq
@@ -76,11 +110,15 @@ def check_groq_api() -> tuple[bool, str]:
         if not key:
             return False, "No API key"
         client = Groq(api_key=key)
-        # List models as a lightweight connectivity test
         client.models.list()
         return True, "Connected"
     except Exception as e:
         return False, str(e)
+
+
+def check_groq_api() -> tuple[bool, str]:
+    """Make a minimal Groq API test call (legacy wrapper)."""
+    return check_groq()
 
 
 def check_composio() -> tuple[bool, str]:
@@ -94,6 +132,7 @@ def check_composio() -> tuple[bool, str]:
         return True, f"Connected ({count} toolkits)"
     except Exception as e:
         return False, str(e)
+
 
 
 def check_embedding_model() -> tuple[bool, str]:
@@ -217,7 +256,7 @@ def run_all_checks() -> list[tuple[str, bool, str]]:
     checks.append(("Python", ok, detail))
 
     # Docker
-    ok, detail = check_docker_installed()
+    ok, detail = check_docker()
     checks.append(("Docker", ok, detail))
 
     # Docker Compose
@@ -241,7 +280,7 @@ def run_all_checks() -> list[tuple[str, bool, str]]:
     checks.append(("Embedding Model", ok, detail))
 
     # Groq
-    ok, detail = check_groq_api()
+    ok, detail = check_groq()
     checks.append(("Groq", ok, detail))
 
     # Composio

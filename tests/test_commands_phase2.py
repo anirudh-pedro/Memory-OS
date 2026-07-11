@@ -12,9 +12,9 @@ class TestPhase2Commands(unittest.TestCase):
     """Test suite for Phase 2 command execution logic."""
 
     @patch("cli.commands.init.get_input")
-    @patch("cli.commands.init.check_docker_installed")
-    @patch("cli.commands.init.check_docker_compose_installed")
-    @patch("cli.commands.init.check_docker_running")
+    @patch("cli.commands.init.check_docker")
+    @patch("cli.commands.init.check_neo4j")
+    @patch("cli.commands.init.check_qdrant")
     @patch("cli.commands.init.ensure_workspace")
     @patch("cli.commands.init.generate_default_config")
     @patch("cli.commands.init.save_config")
@@ -35,19 +35,19 @@ class TestPhase2Commands(unittest.TestCase):
         mock_save_config,
         mock_generate_config,
         mock_ensure_workspace,
-        mock_docker_running,
-        mock_compose_installed,
-        mock_docker_installed,
+        mock_qdrant,
+        mock_neo,
+        mock_docker,
         mock_get_input,
     ):
         """Test successful init run with mocks."""
         # Setup mocks
-        mock_docker_installed.return_value = (True, "Docker version 27.4.1")
-        mock_compose_installed.return_value = (True, "Compose version 2.32.4")
-        mock_docker_running.return_value = True
+        mock_docker.return_value = (True, "Ready")
+        mock_neo.return_value = (False, "Offline")
+        mock_qdrant.return_value = (False, "Offline")
         
-        # User inputs: Neo4j password, Groq key, Composio key, download model, connect toolkits
-        mock_get_input.side_effect = ["memory_neo", "gsk_groq", "ak_composio", "y", "y", "y", "y", "y"]
+        # User inputs: Neo4j password, Groq key, Composio key, download model, connect toolkits (mock n for skip)
+        mock_get_input.side_effect = ["memory_neo", "gsk_groq", "ak_composio", "y", "n"]
         mock_compose_up.return_value = True
         mock_wait_for_services.return_value = True
         mock_run_all_checks.return_value = [("SQLite", True, "Healthy"), ("Docker", True, "Healthy")]
@@ -60,9 +60,9 @@ class TestPhase2Commands(unittest.TestCase):
         execute(None)
 
         # Assert calls
-        mock_docker_installed.assert_called_once()
-        mock_compose_installed.assert_called_once()
-        mock_docker_running.assert_called_once()
+        mock_docker.assert_called_once()
+        mock_neo.assert_called_once()
+        mock_qdrant.assert_called_once()
         mock_ensure_workspace.assert_called_once_with("default")
         mock_generate_config.assert_called_once()
         mock_save_config.assert_called_once()

@@ -14,9 +14,8 @@ import os
 from pathlib import Path
 from infrastructure.workspace import ensure_workspace, get_db_path
 from infrastructure.config import generate_default_config, save_config, load_config
-from infrastructure.docker import check_docker_installed, check_docker_compose_installed, check_docker_running
 from infrastructure.compose import compose_up, wait_for_services
-from infrastructure.health import run_all_checks
+from infrastructure.health import run_all_checks, check_docker, check_neo4j, check_qdrant
 from storage.db import init_db
 from core.embedder import Embedder
 
@@ -53,37 +52,20 @@ def execute(args):
         sys.exit(1)
     print(f"  ✓ Python version: {py_ver}")
 
-    docker_ok, docker_ver = check_docker_installed()
+    docker_ok, docker_detail = check_docker()
     if not docker_ok:
         print("----------------------------------")
-        print("Docker is not installed or not in PATH.")
-        print("")
-        print("Please install Docker Desktop and rerun:")
-        print("memory-os init")
-        print("----------------------------------")
-        sys.exit(1)
-    print(f"  ✓ Docker: {docker_ver}")
-
-    compose_ok, compose_ver = check_docker_compose_installed()
-    if not compose_ok:
-        print("----------------------------------")
-        print("Docker Compose is not installed.")
-        print("")
-        print("Please install Docker Compose and rerun:")
-        print("memory-os init")
-        print("----------------------------------")
-        sys.exit(1)
-    print(f"  ✓ Docker Compose: {compose_ver}")
-
-    if not check_docker_running():
-        print("----------------------------------")
         print("Docker Desktop is not running.")
+        print("")
+        print("stderr:")
+        print(docker_detail)
         print("")
         print("Start Docker Desktop and rerun:")
         print("memory-os init")
         print("----------------------------------")
         sys.exit(1)
     print("  ✓ Docker Daemon: Running")
+
 
 
     # 2. Workspace Tree Setup
@@ -120,15 +102,23 @@ def execute(args):
 
     # 4. Service Provisioning via Docker Compose
     print("\n[4/7] Provisioning local services (Neo4j, Qdrant)...")
-    if not compose_up():
-        print("❌ Failed to start docker compose services.")
-        sys.exit(1)
-    print("  ✓ Containers launched. Waiting for services to become healthy...")
-    
-    if not wait_for_services(timeout=60):
-        print("❌ Services failed to start or respond to health checks in time.")
-        sys.exit(1)
-    print("  ✓ Services are healthy.")
+    neo4j_ok, _ = check_neo4j()
+    qdrant_ok, _ = check_qdrant()
+
+    if neo4j_ok and qdrant_ok:
+        print("  ✓ Neo4j already running")
+        print("  ✓ Qdrant already running")
+    else:
+        if not compose_up():
+            print("❌ Failed to start docker compose services.")
+            sys.exit(1)
+        print("  ✓ Containers launched. Waiting for services to become healthy...")
+        
+        if not wait_for_services(timeout=60):
+            print("❌ Services failed to start or respond to health checks in time.")
+            sys.exit(1)
+        print("  ✓ Services are healthy.")
+
 
     # 5. Schema & Database Initialization
     print("\n[5/7] Initializing SQLite database...")

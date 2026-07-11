@@ -53,8 +53,19 @@ def execute(args):
             "Active Plugins": "No plugins are authenticated. Run 'memory-os init' to set up connector logins.",
         }
         for name, detail in failed:
-            rec = recommendations.get(name, "Check log file logs/memory_os.log for errors.")
-            print(f"  * {name}: {rec} (Detail: {detail})")
+            if name == "Neo4j" and "Authentication failed" in detail:
+                print("  * Neo4j: Neo4j is running but authentication failed.")
+                print("    Recommendations:")
+                print("      memory-os config set neo4j.user <username>")
+                print("      memory-os config set neo4j.password <password>")
+                print("      or")
+                print("      memory-os init")
+            elif name == "Neo4j" and "Unreachable" in detail:
+                rec = recommendations.get(name, "Check log file logs/memory_os.log for errors.")
+                print(f"  * {name}: {rec} (Detail: {detail})")
+            else:
+                rec = recommendations.get(name, "Check log file logs/memory_os.log for errors.")
+                print(f"  * {name}: {rec} (Detail: {detail})")
         print("─────────────────────────────")
     else:
         print("\n  All checks passed.")

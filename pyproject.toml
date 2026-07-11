@@ -1,5 +1,5 @@
 [project]
-name = "memory-os"
+name = "cli-memory-os"
 version = "0.1.0"
 description = "CLI-based Personal Knowledge Operating System"
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Memory-OS Authors", email = "info@memory-os.dev" }
+    { name = "Anirudh T", email = "anirudh200584@gmail.com" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3 :: Only",

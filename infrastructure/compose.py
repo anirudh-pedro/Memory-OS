@@ -15,6 +15,21 @@ import logging
 logger = logging.getLogger("infrastructure.compose")
 
 
+def format_infra_failure(cmd: list[str], exit_code: int, stderr: str, recommendation: str) -> None:
+    """Print standard, actionable docker/infrastructure command failure report."""
+    print("Docker command:")
+    print(" ".join(cmd))
+    print("")
+    print("Exit code:")
+    print(exit_code)
+    print("")
+    print("stderr:")
+    print(stderr)
+    print("")
+    print("Recommendation:")
+    print(recommendation)
+
+
 def _get_compose_file() -> str:
     """Return path to the project's docker-compose.yml."""
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker-compose.yml")
@@ -41,12 +56,17 @@ def _run_compose(args: list[str], project_dir: str | None = None) -> subprocess.
     )
 
 
-
 def compose_up(project_dir: str | None = None) -> bool:
     """Start services with docker compose up -d."""
     result = _run_compose(["up", "-d"], project_dir)
     if result.returncode != 0:
         logger.error(f"docker compose up failed: {result.stderr}")
+        format_infra_failure(
+            cmd=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr or result.stdout,
+            recommendation="Run:\n  docker compose up"
+        )
         return False
     return True
 
@@ -56,6 +76,12 @@ def compose_down(project_dir: str | None = None) -> bool:
     result = _run_compose(["down"], project_dir)
     if result.returncode != 0:
         logger.error(f"docker compose down failed: {result.stderr}")
+        format_infra_failure(
+            cmd=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr or result.stdout,
+            recommendation="Run:\n  docker compose down"
+        )
         return False
     return True
 
@@ -65,8 +91,15 @@ def compose_stop(project_dir: str | None = None) -> bool:
     result = _run_compose(["stop"], project_dir)
     if result.returncode != 0:
         logger.error(f"docker compose stop failed: {result.stderr}")
+        format_infra_failure(
+            cmd=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr or result.stdout,
+            recommendation="Run:\n  docker compose stop"
+        )
         return False
     return True
+
 
 
 def compose_status(project_dir: str | None = None) -> list[dict]:
