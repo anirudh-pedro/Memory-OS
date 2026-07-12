@@ -67,23 +67,36 @@ def sync_github():
 
         print("Syncing GitHub...\n")
         
-        # Fetch repositories
-        resp = s.execute(tool_slug="github_list_repositories_for_the_authenticated_user", arguments={})
-        if resp.error or not resp.data:
-            print("No repositories found.")
-            return
-
-        resp_data = resp.data
-        if isinstance(resp_data, dict) and "response_data" in resp_data:
-            resp_data = resp_data["response_data"]
-
+        # Fetch repositories with pagination
         repos = []
-        if isinstance(resp_data, list):
-            repos = resp_data
-        elif isinstance(resp_data, dict):
-            repos = resp_data.get("repositories") or resp_data.get("items") or []
+        page = 1
+        while True:
+            resp = s.execute(
+                tool_slug="github_list_repositories_for_the_authenticated_user",
+                arguments={"per_page": 100, "page": page}
+            )
+            if resp.error or not resp.data:
+                break
+                
+            resp_data = resp.data
+            if isinstance(resp_data, dict) and "response_data" in resp_data:
+                resp_data = resp_data["response_data"]
+                
+            page_repos = []
+            if isinstance(resp_data, list):
+                page_repos = resp_data
+            elif isinstance(resp_data, dict):
+                page_repos = resp_data.get("repositories") or resp_data.get("items") or []
+                
+            if not isinstance(page_repos, list) or not page_repos:
+                break
+                
+            repos.extend(page_repos)
+            if len(page_repos) < 100:
+                break
+            page += 1
 
-        if not isinstance(repos, list) or not repos:
+        if not repos:
             print("No repositories found.")
             return
 

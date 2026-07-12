@@ -11,11 +11,9 @@ Comprehensive unit and integration tests for Memory-OS v1.0 release features:
 """
 
 import os
-import sys
 import unittest
 import tempfile
 import zipfile
-import json
 import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -24,7 +22,7 @@ from unittest.mock import patch, MagicMock
 TEST_WORKSPACE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_temp_workspace")
 os.environ["MEMORY_OS_WORKSPACE"] = TEST_WORKSPACE
 
-from infrastructure.config import get_dotted, set_dotted, DEFAULTS, save_config, get_config
+from infrastructure.config import get_dotted, set_dotted, DEFAULTS, save_config
 from connectors.registry import discover_connectors, register
 from connectors.base import BaseConnector
 
@@ -267,7 +265,7 @@ class TestObservabilityParser(unittest.TestCase):
     """Test suite verifying log parser telemetry matching regex."""
 
     def test_observability_parser(self):
-        from infrastructure.observability import get_performance_summary, parse_observability_metrics
+        from infrastructure.observability import get_performance_summary
         summary = get_performance_summary()
         self.assertIsInstance(summary, dict)
 
@@ -278,7 +276,7 @@ class TestDockerInfrastructure(unittest.TestCase):
     @patch("subprocess.run")
     def test_docker_checks(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="version 2.0")
-        from infrastructure.docker import check_docker_installed, check_docker_compose_installed, check_docker_running
+        from infrastructure.docker import check_docker_installed, check_docker_compose_installed
         self.assertTrue(check_docker_installed()[0])
         self.assertTrue(check_docker_compose_installed()[0])
 

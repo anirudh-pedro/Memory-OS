@@ -115,7 +115,6 @@ def run_interactive():
         close_qdrant_client,
     )
     from core.embedder import Embedder
-    from core.llm import run_hybrid_rag
     from storage.graph import GraphStore
     from connectors.github import sync_github
     from connectors.gmail import sync_gmail
@@ -283,30 +282,11 @@ def run_interactive():
                 if not arg:
                     print("Usage: ask <question>")
                 else:
-                    rag_res = run_hybrid_rag(arg)
-                    print("========================================")
-                    print("ANSWER")
-                    print("========================================")
-                    print(rag_res["answer"])
-                    print("\n========================================")
-                    print("SOURCES")
-                    print("========================================")
-                    if rag_res["sources"]:
-                        for s in rag_res["sources"]:
-                            print(f"- {s}")
-                    else:
-                        print("None")
-                    print("\n========================================")
-                    print("REPOSITORIES USED")
-                    print("========================================")
-                    if rag_res["repositories"]:
-                        for r in rag_res["repositories"]:
-                            print(f"- {r}")
-                    else:
-                        print("None")
-                    print("\n========================================")
-                    print(f"Confidence: {rag_res['confidence']:.2f}")
-                    print("========================================")
+                    from cli.commands.ask import run_and_print_ask
+                    try:
+                        run_and_print_ask(arg)
+                    except Exception as e:
+                        print(f"❌ Error executing query: {e}")
 
             elif cmd == "repo-info":
                 if not arg:
@@ -441,11 +421,16 @@ def route_command(args):
     elif command == "logs":
         from cli.commands.logs import execute
         execute(args)
+    elif command == "sync":
+        from cli.commands.sync import execute
+        execute(args)
+    elif command == "ask":
+        from cli.commands.ask import execute
+        execute(args)
     else:
-        # For commands not yet implemented, show a helpful message
-        print(f"Command '{command}' is not yet implemented.")
-        print("Run 'memory-os --help' for available commands.")
-        print("Run 'memory-os' (no arguments) for the interactive REPL.")
+        from cli.parser import build_parser
+        build_parser().print_help()
+        sys.exit(1)
 
 
 

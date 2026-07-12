@@ -247,7 +247,7 @@ def check_active_plugins() -> tuple[bool, str]:
 
 def run_all_checks() -> list[tuple[str, bool, str]]:
     """Run all health checks and return a list of (name, passed, detail)."""
-    from infrastructure.docker import check_docker_installed, check_docker_compose_installed
+    from infrastructure.docker import check_docker_compose_installed
 
     checks = []
 

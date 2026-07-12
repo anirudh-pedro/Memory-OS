@@ -6,7 +6,6 @@ into the active workspace profile.
 """
 
 import sys
-import os
 import json
 import zipfile
 import shutil

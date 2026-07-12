@@ -3,7 +3,6 @@ Unit tests for Phase 2 command modules: init, start, and stop.
 Mocks out external systems like Docker, Compose, and interactive prompts.
 """
 
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
 

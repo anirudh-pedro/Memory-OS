@@ -208,7 +208,7 @@ class TestModuleImports:
         assert callable(cli_entrypoint)
 
     def test_import_infrastructure_config(self):
-        from infrastructure.config import load_config, DEFAULTS
+        from infrastructure.config import DEFAULTS
         assert isinstance(DEFAULTS, dict)
 
     def test_import_infrastructure_workspace(self):

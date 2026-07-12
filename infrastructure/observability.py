@@ -10,7 +10,6 @@ Parses logs from the active log file (or tracks metrics) to measure:
 - RAG query execution time
 """
 
-import os
 import re
 from pathlib import Path
 from infrastructure.workspace import get_workspace_root

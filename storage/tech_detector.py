@@ -1,5 +1,5 @@
 import re
-from storage.db import get_repository_details, get_all_repositories, get_connection
+from storage.db import get_repository_details, get_connection
 
 TECH_PATTERNS = {
     "Anthropic": [r"\banthropic\b"],
@@ -77,41 +77,3 @@ def detect_tech_for_repo(repo_name: str) -> list:
     detected = detect_tech_in_text(combined_text)
     return sorted(list(set(detected)))
 
-def detect_all_tech() -> list:
-    repos = get_all_repositories()
-    all_tech = set()
-    for repo in repos:
-        tech_list = detect_tech_for_repo(repo["repo_name"])
-        all_tech.update(tech_list)
-    return sorted(list(all_tech))
-
-def find_repos_by_tech(tech_name: str) -> list:
-    repos = get_all_repositories()
-    matching_repos = []
-    tech_name_lower = tech_name.lower()
-    
-    for repo in repos:
-        repo_name = repo["repo_name"]
-        detected = detect_tech_for_repo(repo_name)
-        
-        has_match = False
-        for t in detected:
-            if t.lower() == tech_name_lower:
-                has_match = True
-                break
-                
-        if not has_match:
-            # Fallback direct substring/regex lookup in full text
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT content FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)", (repo_name,))
-            combined_text = (repo.get("description") or "") + "\n" + "\n".join([row[0] for row in cursor.fetchall() if row[0]])
-            conn.close()
-            
-            if re.search(r'\b' + re.escape(tech_name_lower) + r'\b', combined_text.lower()):
-                has_match = True
-                
-        if has_match:
-            matching_repos.append(repo_name)
-            
-    return sorted(matching_repos)

@@ -1,4 +1,3 @@
-import os
 
 class Embedder:
     _model = None

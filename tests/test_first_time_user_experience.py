@@ -2,7 +2,7 @@ import os
 import sys
 import pytest
 import sqlite3
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -76,6 +76,7 @@ def test_init_missing_docker(capsys):
     """Test memory-os init when Docker Desktop is not running."""
     with patch("infrastructure.docker.check_docker_installed", return_value=(True, "Docker version 24.0.7")), \
          patch("infrastructure.docker.check_docker_compose_installed", return_value=(True, "Docker Compose version 2.23.3")), \
+         patch("infrastructure.docker.check_docker_daemon", return_value=(False, "Docker Desktop is not running.")), \
          patch("infrastructure.docker.check_docker_running", return_value=False):
          
         with pytest.raises(SystemExit) as excinfo:

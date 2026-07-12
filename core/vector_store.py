@@ -19,10 +19,10 @@ def get_qdrant_client() -> QdrantClient:
     if _qdrant_client is None:
         url = os.getenv("QDRANT_URL")
         if url:
-            _qdrant_client = QdrantClient(url=url)
+            _qdrant_client = QdrantClient(url=url, timeout=60.0)
         else:
             path = os.getenv("MEMORY_OS_QDRANT_PATH", "qdrant_storage")
-            _qdrant_client = QdrantClient(path=path)
+            _qdrant_client = QdrantClient(path=path, timeout=60.0)
     return _qdrant_client
 
 
@@ -226,55 +226,6 @@ def get_vector_index_stats() -> dict:
             "exists": False
         }
 
-def get_vector_chunks(repo_name: str, limit: int = 5) -> list:
-    """Retrieve the first `limit` chunks for a given repository from Qdrant.
-    Returns a list of Record objects.
-    """
-    client = get_qdrant_client()
-    try:
-        filter_expr = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="repository_name",
-                    match=models.MatchValue(value=repo_name)
-                )
-            ]
-        )
-        points, _ = client.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=filter_expr,
-            limit=limit,
-            with_payload=True,
-            with_vectors=False
-        )
-        return points
-    except Exception as e:
-        import logging
-        logging.getLogger("vector_store").error(f"Error fetching vector chunks: {e}")
-        return []
-
-def count_vector_chunks(repo_name: str) -> int:
-    """Count the total number of vectors for a given repository in Qdrant."""
-    client = get_qdrant_client()
-    try:
-        filter_expr = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="repository_name",
-                    match=models.MatchValue(value=repo_name)
-                )
-            ]
-        )
-        result = client.count(
-            collection_name=COLLECTION_NAME,
-            count_filter=filter_expr,
-            exact=True
-        )
-        return result.count
-    except Exception as e:
-        import logging
-        logging.getLogger("vector_store").error(f"Error counting vector chunks: {e}")
-        return 0
 
 def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, raw_scores: bool = False, repo_filter: str = None) -> list:
     """Perform raw vector search on the Qdrant database, with optional source and repository filters."""

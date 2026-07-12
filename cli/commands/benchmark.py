@@ -6,8 +6,7 @@ graph lookups, LLM invocation, and RAG pipelines.
 """
 
 import time
-import sys
-from infrastructure.health import check_neo4j, check_qdrant, check_groq_api, check_memory_usage
+from infrastructure.health import check_qdrant, check_groq_api, check_memory_usage
 from core.embedder import Embedder
 
 

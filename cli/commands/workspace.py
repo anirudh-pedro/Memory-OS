@@ -5,10 +5,8 @@ Provides management of active workspaces and profile structures.
 """
 
 import sys
-import shutil
 import os
 from datetime import datetime
-from pathlib import Path
 from infrastructure.workspace import (
     get_active_profile,
     list_profiles,

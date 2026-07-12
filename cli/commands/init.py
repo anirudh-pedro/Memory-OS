@@ -6,16 +6,13 @@ Performs first-time setup and onboarding for Memory-OS using ComposeManager.
 
 import sys
 import uuid
-import time
 import os
-from pathlib import Path
 from infrastructure.workspace import ensure_workspace, get_db_path
 from infrastructure.config import generate_default_config, save_config, load_config
-from infrastructure.compose import ComposeManager, compose_up, wait_for_services
+from infrastructure.compose import ComposeManager, wait_for_services
 from infrastructure.health import run_all_checks, check_docker, check_neo4j, check_qdrant
 from storage.db import init_db
 from core.embedder import Embedder
-from infrastructure.docker import check_docker_installed, check_docker_compose_installed, check_docker_running
 
 
 

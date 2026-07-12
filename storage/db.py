@@ -339,22 +339,6 @@ def search_local_knowledge_ranked(query: str, repo_filter: str = None) -> list:
     ranked_results.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
     return ranked_results
 
-def get_repository_files(repo_name: str) -> list:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_name FROM repository_documents WHERE LOWER(repo_name) = LOWER(?)", (repo_name,))
-    files = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return files
-
-def get_repository_readme(repo_name: str) -> str:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT content FROM repository_documents WHERE LOWER(repo_name) = LOWER(?) AND LOWER(file_name) = 'readme.md'", (repo_name,))
-    row = cursor.fetchone()
-    readme = row[0] if row else None
-    conn.close()
-    return readme
 
 def get_all_repositories() -> list:
     conn = get_connection()
@@ -504,25 +488,3 @@ def clear_fallback_graph():
     conn.commit()
     conn.close()
 
-def delete_data_before_date(date_str: str) -> dict:
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # We compare string-wise since ISO dates sort correctly
-    cursor.execute("DELETE FROM emails WHERE received_at < ?", (date_str,))
-    emails_deleted = cursor.rowcount
-    
-    cursor.execute("DELETE FROM repository_documents WHERE synced_at < ?", (date_str,))
-    docs_deleted = cursor.rowcount
-    
-    cursor.execute("DELETE FROM document_chunks WHERE created_at < ?", (date_str,))
-    chunks_deleted = cursor.rowcount
-    
-    conn.commit()
-    conn.close()
-    
-    return {
-        "emails": emails_deleted,
-        "documents": docs_deleted,
-        "chunks": chunks_deleted
-    }

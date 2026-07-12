@@ -1,6 +1,5 @@
 import os
 import sys
-import pytest
 from unittest.mock import patch, MagicMock
 
 # Ensure project root is in path
@@ -111,12 +110,14 @@ def test_qdrant_version_incompatible():
 @patch("cli.commands.init.get_input", side_effect=["pass", "groq", "composio", "n", "n"])
 def test_init_skips_healthy_services(mock_input, mock_run_checks, mock_db, mock_save, mock_gen, mock_ensure, mock_qdrant, mock_neo, mock_docker, capsys):
     """Test memory-os init bypasses provisioning when services are already running and healthy."""
-    with patch("cli.commands.init.compose_up") as mock_compose_up:
+    with patch("cli.commands.init.ComposeManager") as mock_compose_manager:
+        mock_manager = MagicMock()
+        mock_compose_manager.return_value = mock_manager
         execute_init(DummyArgs())
         captured = capsys.readouterr()
         
-        # Verify compose_up was never called because services were already healthy
-        mock_compose_up.assert_not_called()
+        # Verify compose_up/manager.up was never called because services were already healthy
+        mock_manager.up.assert_not_called()
         
         assert "Neo4j already running" in captured.out
         assert "Qdrant already running" in captured.out

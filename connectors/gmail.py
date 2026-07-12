@@ -23,19 +23,56 @@ def sync_gmail():
             print("Gmail connection not active.")
             return
 
-        # Fetch emails
-        resp = s.execute(tool_slug="gmail_fetch_emails", arguments={"max_results": 50, "include_payload": True})
-        if not resp or resp.error or not resp.data:
+        # Determine last fetched date from stored emails to optimize retrieval query
+        query = ""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(received_at) FROM emails WHERE received_at IS NOT NULL AND received_at != ''")
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                import re
+                m = re.match(r"(\d{4})[-/](\d{2})[-/](\d{2})", row[0])
+                if m:
+                    query = f"after:{m.group(1)}/{m.group(2)}/{m.group(3)}"
+        except Exception as e:
+            import logging
+            logging.getLogger("gmail").warning(f"Failed to query last fetched date from SQLite: {e}")
+
+        # Fetch emails with pagination
+        emails = []
+        page_token = None
+        while True:
+            args = {"max_results": 100, "include_payload": True}
+            if query:
+                args["q"] = query
+            if page_token:
+                args["page_token"] = page_token
+
+            resp = s.execute(tool_slug="gmail_fetch_emails", arguments=args)
+            if not resp or resp.error or not resp.data:
+                break
+
+            page_emails = resp.data.get("messages", [])
+            if not page_emails:
+                page_emails = resp.data.get("response_data", {}).get("messages", [])
+
+            if not page_emails:
+                break
+
+            emails.extend(page_emails)
+            page_token = resp.data.get("nextPageToken")
+            if not page_token:
+                break
+
+            # Safety check: avoid infinite loops if user has thousands of new emails
+            if len(emails) >= 500:
+                break
+
+        if not emails:
             print("No emails found.")
             return
-
-        emails = resp.data.get("messages", [])
-        if not emails:
-            # Check response_data structure just in case
-            emails = resp.data.get("response_data", {}).get("messages", [])
-            if not emails:
-                print("No emails found.")
-                return
 
         print(f"Found {len(emails)} emails")
         
