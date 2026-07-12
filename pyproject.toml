@@ -1,6 +1,6 @@
 [project]
 name = "cli-memory-os"
-version = "0.1.4"
+version = "0.1.5"
 description = "CLI-based Personal Knowledge Operating System"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,6 +25,7 @@ dependencies = [
     "qdrant-client==1.18.0",
     "neo4j==6.2.0",
     "sentence-transformers==5.6.0",
+    "textual>=0.80.0",
 ]
 
 [project.optional-dependencies]
@@ -43,3 +44,8 @@ exclude = ["tests*", "qdrant_storage*", "clean_env*", ".venv*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]

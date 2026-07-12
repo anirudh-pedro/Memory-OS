@@ -371,8 +371,10 @@ def route_command(args):
     command = args.command
 
     if command is None:
-        # No subcommand given — launch interactive REPL
-        run_interactive()
+        # No subcommand given — launch full-screen Textual TUI
+        from cli.tui.app import MemoryOSTUIApp
+        app = MemoryOSTUIApp()
+        app.run()
         return
 
     # Import and execute the appropriate command module
