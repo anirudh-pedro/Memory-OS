@@ -86,6 +86,39 @@ def query_llm_with_retry(messages: list, model: str = None, max_retries: int = 3
             time.sleep(0.5)
     return ""
 
+def inject_repository_summary_chunk(formatted_chunks: list, query_class: str) -> list:
+    """If the query is a cross-repository query, pre-append a summary chunk listing all repos."""
+    if query_class != "Cross Repository Question":
+        return formatted_chunks
+
+    try:
+        from storage.db import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT repo_name, description, language FROM repositories")
+        all_repos = cursor.fetchall()
+        conn.close()
+        
+        if all_repos:
+            repo_list_lines = ["All Connected Repositories:"]
+            for r in all_repos:
+                desc_str = f" - Description: {r[1]}" if r[1] else ""
+                lang_str = f" (Language: {r[2]})" if r[2] else ""
+                repo_list_lines.append(f"- {r[0]}{lang_str}{desc_str}")
+            repo_list_str = "\n".join(repo_list_lines)
+            
+            # Pre-append to formatted_chunks with a high score to prevent trimming
+            formatted_chunks.insert(0, {
+                "text": repo_list_str,
+                "score": 999.0,
+                "type": "repository_summary"
+            })
+    except Exception as e:
+        import logging
+        logging.getLogger("llm").error(f"Failed to generate repository summary context chunk: {e}")
+        
+    return formatted_chunks
+
 def run_hybrid_rag(question: str) -> dict:
     import time
     import logging
@@ -155,6 +188,7 @@ def run_hybrid_rag(question: str) -> dict:
     formatted_chunks, sources, repos, num_vector, num_keyword, num_graph, after_dedup = builder.build_context(
         question, vector_results, keyword_results, graph_results, repo_filter=repo_filter, query_class=query_class
     )
+    formatted_chunks = inject_repository_summary_chunk(formatted_chunks, query_class)
     
     system_prompt = (
         "You are an assistant answering ONLY from the supplied retrieved context.\n\n"
@@ -408,6 +442,7 @@ def run_hybrid_rag_stream(question: str):
     formatted_chunks, sources, repos, num_vector, num_keyword, num_graph, after_dedup = builder.build_context(
         question, vector_results, keyword_results, graph_results, repo_filter=repo_filter, query_class=query_class
     )
+    formatted_chunks = inject_repository_summary_chunk(formatted_chunks, query_class)
     
     system_prompt = (
         "You are an assistant answering ONLY from the supplied retrieved context.\n\n"

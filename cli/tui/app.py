@@ -159,31 +159,44 @@ class Sidebar(Static):
             f"Gmail:   {self.gmail_status}\n"
             f"Notion:  {self.notion_status}\n\n"
             f"[bold cyan]⌨️ Shortcuts[/bold cyan]\n"
-            f"[cyan]C[/cyan]: Chat\n"
-            f"[cyan]S[/cyan]: Sync\n"
-            f"[cyan]D[/cyan]: Doctor\n"
-            f"[cyan]G[/cyan]: Graph\n"
-            f"[cyan]F[/cyan]: Find / Search\n"
-            f"[cyan]M[/cyan]: Monitor\n"
-            f"[cyan]E[/cyan]: Settings\n"
-            f"[cyan]Q[/cyan]: Quit"
+            f"[cyan]ctrl+1[/cyan]: Chat\n"
+            f"[cyan]ctrl+2[/cyan]: Sync\n"
+            f"[cyan]ctrl+3[/cyan]: Doctor\n"
+            f"[cyan]ctrl+4[/cyan]: Graph\n"
+            f"[cyan]ctrl+5[/cyan]: Search\n"
+            f"[cyan]ctrl+6[/cyan]: Monitor\n"
+            f"[cyan]ctrl+7[/cyan]: Settings\n"
+            f"[cyan]ctrl+q[/cyan]: Quit"
         )
-        self.update(Panel(content, title="Memory-OS", border_style="cyan"))
+        self.update(Panel(content, title="Memory-OS", border_style="#1F2937"))
 
 
-class ChatPanel(Static):
+class ChatPanel(Container):
     """Main Chat Interface supporting streaming responses and input field."""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="chat_container"):
             with VerticalScroll(id="chat_history_scroll"):
+                welcome_md = (
+                    "```\n"
+                    " __  __                                     ____   ____\n"
+                    "|  \\/  | ___ _ __ ___   ___  _ __ _   _    / ___| / ___|\n"
+                    "| |\\/| |/ _ \\ '_ ` _ \\ / _ \\| '__| | | |   \\___ \\| |\n"
+                    "| |  | |  __/ | | | | | (_) | |  | |_| |    ___) | |___\n"
+                    "|_|  |_|\\___|_| |_| |_|\\___/|_|   \\__, |   |____/ \\____|\n"
+                    "                                  |___/\n"
+                    "```\n"
+                    "**Grounded Personal Knowledge Operating System**\n\n"
+                    "Ask questions grounded against your connected workspace: repositories, documentation files, and synced emails.\n\n"
+                    "💡 *Tip: Try asking: 'tell me about my projects' or 'what repositories use Python?'*"
+                )
                 yield Static(
-                    RichMarkdown("# Memory-OS RAG Assistant\nAsk any question grounded against your indexed sources! Try asking about your repositories, emails, or technologies used."),
+                    RichMarkdown(welcome_md),
                     id="welcome_message"
                 )
             with Horizontal(id="input_bar"):
+                yield Label("❯", id="prompt_symbol")
                 yield Input(placeholder="Ask a question...", id="chat_input")
-                yield Button("Send", id="chat_send_btn", variant="primary")
 
     def on_mount(self) -> None:
         self.query_one("#chat_input").focus()
@@ -193,10 +206,6 @@ class ChatPanel(Static):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         await self.process_message()
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "chat_send_btn":
-            await self.process_message()
 
     async def process_message(self) -> None:
         chat_input = self.query_one("#chat_input", Input)
@@ -212,20 +221,20 @@ class ChatPanel(Static):
         except Exception:
             pass
 
-        # Append User Message Bubble
+        # Append User Message
         history_scroll = self.query_one("#chat_history_scroll")
+        user_markup = f"[bold green]● You[/bold green]\n\n{user_text}"
         history_scroll.mount(
-            Static(Panel(user_text, title="[bold green]You[/bold green]", border_style="green"), classes="chat_msg_user")
+            Static(user_markup, classes="chat_msg_user")
         )
 
-        # Append Assistant Loading/Streaming Message Bubble
-        agent_msg = Static(Panel("Thinking...", title="[bold cyan]Memory-OS[/bold cyan]", border_style="cyan"), classes="chat_msg_agent")
+        # Append Assistant Loading/Streaming Message
+        agent_msg = Static("[bold cyan]● Memory-OS[/bold cyan]\n\n[italic dim]Thinking...[/italic dim]", classes="chat_msg_agent")
         history_scroll.mount(agent_msg)
         self.scroll_to_bottom()
 
         # Disable input while processing
         chat_input.disabled = True
-        self.query_one("#chat_send_btn").disabled = True
 
         # Run generator task in a background worker
         self.run_worker(self.stream_response(user_text, agent_msg))
@@ -240,7 +249,7 @@ class ChatPanel(Static):
         try:
             gen = await loop.run_in_executor(executor, get_generator)
         except Exception as e:
-            response_widget.update(Panel(f"Error: {e}", title="[bold red]Error[/bold red]", border_style="red"))
+            response_widget.update(f"[bold red]● Error[/bold red]\n\n{e}")
             self.enable_input()
             return
 
@@ -255,14 +264,14 @@ class ChatPanel(Static):
             except StopIteration:
                 break
             except Exception as e:
-                response_widget.update(Panel(f"Error: {e}", title="[bold red]Error[/bold red]", border_style="red"))
+                response_widget.update(f"[bold red]● Error[/bold red]\n\n{e}")
                 break
 
             if item["type"] == "diagnostics":
                 query_class = item["data"].get("query_class", "Unknown")
             elif item["type"] == "token":
                 answer_text += item["content"]
-                response_widget.update(Panel(answer_text, title=f"[bold cyan]Memory-OS ({query_class})[/bold cyan]", border_style="cyan"))
+                response_widget.update(f"[bold cyan]● Memory-OS ({query_class})[/bold cyan]\n\n{answer_text}")
                 self.scroll_to_bottom()
             elif item["type"] == "done":
                 sources = item["sources"]
@@ -280,7 +289,7 @@ class ChatPanel(Static):
                     metadata.append(f"**Confidence**: {confidence:.1f}")
                     final_md += "\n\n---\n" + "\n".join(metadata)
 
-                response_widget.update(Panel(RichMarkdown(final_md), title=f"[bold cyan]Memory-OS ({query_class})[/bold cyan]", border_style="cyan"))
+                response_widget.update(RichMarkdown(f"### ● Memory-OS ({query_class})\n\n{final_md}"))
                 self.scroll_to_bottom()
 
         self.enable_input()
@@ -288,12 +297,11 @@ class ChatPanel(Static):
     def enable_input(self) -> None:
         chat_input = self.query_one("#chat_input", Input)
         chat_input.disabled = False
-        self.query_one("#chat_send_btn").disabled = False
         chat_input.focus()
         self.scroll_to_bottom()
 
 
-class DoctorPanel(Static):
+class DoctorPanel(Container):
     """System diagnostic view execution wizard."""
 
     def compose(self) -> ComposeResult:
@@ -354,11 +362,11 @@ class DoctorPanel(Static):
         report.append("=" * 45)
         report.append(f"Summary: [bold]{healthy_count}/{len(results)}[/bold] services are functional.")
 
-        results_static.update(Panel("\n".join(report), border_style="cyan"))
+        results_static.update(Panel("\n".join(report), border_style="#1F2937"))
         btn.disabled = False
 
 
-class SyncPanel(Static):
+class SyncPanel(Container):
     """Workspace synchronization action board."""
 
     def compose(self) -> ComposeResult:
@@ -453,13 +461,13 @@ class SyncPanel(Static):
             return mystdout.getvalue()
 
         output = await loop.run_in_executor(executor, run_sync_redirected)
-        log_widget.update(Panel(output, title="Sync Log Output", border_style="cyan"))
+        log_widget.update(Panel(output, title="Sync Log Output", border_style="#1F2937"))
 
         btn_all.disabled = False
         btn_rebuild.disabled = False
 
 
-class GraphPanel(Static):
+class GraphPanel(Container):
     """View graph metrics and technological detections."""
 
     def compose(self) -> ComposeResult:
@@ -530,10 +538,10 @@ class GraphPanel(Static):
         for r_name, lang in repos:
             stats_text += f" - [white]{r_name}[/white] : {lang or 'Unknown'}\n"
 
-        self.query_one("#graph_stats", Static).update(Panel(stats_text, border_style="cyan"))
+        self.query_one("#graph_stats", Static).update(Panel(stats_text, border_style="#1F2937"))
 
 
-class SearchPanel(Static):
+class SearchPanel(Container):
     """Semantic Finder View."""
 
     def compose(self) -> ComposeResult:
@@ -598,7 +606,7 @@ class SearchPanel(Static):
         results_static.update("\n".join(report))
 
 
-class MonitorPanel(Static):
+class MonitorPanel(Container):
     """Latency dashboard displaying performance parser metrics."""
 
     def compose(self) -> ComposeResult:
@@ -633,17 +641,17 @@ class MonitorPanel(Static):
             f" - [bold cyan]Average LLM generation[/bold cyan]: {avg(l_times):.2f}s ({len(l_times)} calls)\n"
             f" - [bold cyan]Average Embedding Gen[/bold cyan] : {avg([x[0] for x in e_times]):.2f}s ({len(e_times)} runs)\n"
             f" - [bold cyan]Average Qdrant Upload[/bold cyan] : {avg([x[0] for x in v_uploads]):.2f}s ({len(v_uploads)} runs)\n\n"
-            f"[bold cyan]📊 Recent Log Details[/bold cyan]\n"
+            f"[bold cyan] Recent Log Details[/bold cyan]\n"
         )
         if r_times:
             stats_text += f" - Last RAG execution: {r_times[-1]:.2f}s\n"
         if l_times:
             stats_text += f" - Last Groq response: {l_times[-1]:.2f}s\n"
         
-        self.query_one("#monitor_stats", Static).update(Panel(stats_text, border_style="cyan"))
+        self.query_one("#monitor_stats", Static).update(Panel(stats_text, border_style="#1F2937"))
 
 
-class SettingsPanel(Static):
+class SettingsPanel(Container):
     """View active configs and workspaces."""
 
     def compose(self) -> ComposeResult:
@@ -668,7 +676,7 @@ class SettingsPanel(Static):
             f"Groq Model:      {cfg.get('groq', {}).get('model', 'llama-3.3-70b-versatile')}\n"
             f"Embedding Model: {cfg.get('embeddings', {}).get('model', 'all-MiniLM-L6-v2')}\n"
         )
-        self.query_one("#settings_details", Static).update(Panel(details, border_style="cyan"))
+        self.query_one("#settings_details", Static).update(Panel(details, border_style="#1F2937"))
 
 
 class MemoryOSTUIApp(App):
@@ -677,7 +685,7 @@ class MemoryOSTUIApp(App):
     TITLE = "Memory-OS Terminal UI"
     CSS = """
     Screen {
-        background: #0f1419;
+        background: #0B0F19;
     }
     
     #main_layout {
@@ -687,8 +695,8 @@ class MemoryOSTUIApp(App):
     Sidebar {
         width: 35;
         height: 100%;
-        background: #141923;
-        border-right: solid cyan;
+        background: #111622;
+        border-right: solid #1F2937;
     }
 
     ContentSwitcher {
@@ -703,19 +711,24 @@ class MemoryOSTUIApp(App):
 
     #chat_history_scroll {
         height: 1fr;
-        border: solid cyan;
+        border: solid #1F2937;
         margin-bottom: 1;
         padding: 1 2;
+        background: #0B0F19;
     }
 
     .chat_msg_user {
         margin: 1 0;
-        align: right middle;
+        background: #161B22;
+        border-left: solid #10B981;
+        padding: 1 2;
     }
 
     .chat_msg_agent {
         margin: 1 0;
-        align: left middle;
+        background: #111622;
+        border-left: solid #3B82F6;
+        padding: 1 2;
     }
 
     #input_bar {
@@ -725,14 +738,21 @@ class MemoryOSTUIApp(App):
 
     #chat_input {
         width: 1fr;
-        background: #1c2333;
-        border: solid cyan;
+        background: #161B22;
+        border: solid #1F2937;
         color: white;
     }
 
     #chat_send_btn {
         width: 12;
         margin-left: 1;
+        background: #1F2937;
+        color: white;
+        border: none;
+    }
+
+    #chat_send_btn:hover {
+        background: #3B82F6;
     }
 
     #search_bar {
@@ -742,25 +762,40 @@ class MemoryOSTUIApp(App):
 
     #search_query_input {
         width: 1fr;
-        background: #1c2333;
-        border: solid cyan;
+        background: #161B22;
+        border: solid #1F2937;
         color: white;
     }
 
     #search_run_btn {
         width: 12;
         margin-left: 1;
+        background: #1F2937;
+        color: white;
+        border: none;
+    }
+
+    #search_run_btn:hover {
+        background: #3B82F6;
     }
 
     #doctor_results_scroll, #sync_results_scroll, #search_results_scroll {
         height: 1fr;
-        border: solid cyan;
+        border: solid #1F2937;
         margin-top: 1;
         padding: 1 2;
+        background: #0B0F19;
     }
 
     Button {
         min-width: 15;
+        background: #1F2937;
+        color: white;
+        border: none;
+    }
+
+    Button:hover {
+        background: #3B82F6;
     }
 
     Label {
@@ -769,23 +804,25 @@ class MemoryOSTUIApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
-        Binding("c", "switch_view('chat')", "Chat Screen"),
-        Binding("s", "switch_view('sync')", "Sync Screen"),
-        Binding("d", "switch_view('doctor')", "Doctor Screen"),
-        Binding("g", "switch_view('graph')", "Graph Screen"),
-        Binding("f", "switch_view('search')", "Search Screen"),
-        Binding("m", "switch_view('monitor')", "Monitor Screen"),
-        Binding("e", "switch_view('settings')", "Settings Screen"),
-        Binding("q", "quit", "Quit"),
+        Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+1", "switch_view('chat')", "Chat"),
+        Binding("ctrl+2", "switch_view('sync')", "Sync"),
+        Binding("ctrl+3", "switch_view('doctor')", "Doctor"),
+        Binding("ctrl+4", "switch_view('graph')", "Graph"),
+        Binding("ctrl+5", "switch_view('search')", "Search"),
+        Binding("ctrl+6", "switch_view('monitor')", "Monitor"),
+        Binding("ctrl+7", "switch_view('settings')", "Settings"),
+        Binding("ctrl+q", "quit", "Quit"),
     ]
 
-    sidebar_visible = reactive(True)
+    sidebar_visible = reactive(False)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="main_layout"):
-            yield Sidebar(id="sidebar_menu")
+            sidebar = Sidebar(id="sidebar_menu")
+            sidebar.display = self.sidebar_visible
+            yield sidebar
             with ContentSwitcher(initial="chat", id="panel_switcher"):
                 yield ChatPanel(id="chat")
                 yield SyncPanel(id="sync")

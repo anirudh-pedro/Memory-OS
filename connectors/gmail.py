@@ -44,7 +44,7 @@ def sync_gmail():
         emails = []
         page_token = None
         while True:
-            args = {"max_results": 100, "include_payload": True}
+            args = {"max_results": 20, "include_payload": True}
             if query:
                 args["q"] = query
             if page_token:

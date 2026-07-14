@@ -14,8 +14,8 @@ async def test_tui_app_boot_and_default_view():
         switcher = app.query_one("#panel_switcher")
         assert switcher.current == "chat"
         
-        # Verify sidebar menu is visible initially
-        assert app.sidebar_visible is True
+        # Verify sidebar menu is hidden initially
+        assert app.sidebar_visible is False
 
 
 @pytest.mark.asyncio
@@ -23,15 +23,17 @@ async def test_tui_sidebar_toggle():
     """Test sidebar visibility toggles on ctrl+b keystroke."""
     app = MemoryOSTUIApp()
     async with app.run_test() as pilot:
-        assert app.sidebar_visible is True
+        assert app.sidebar_visible is False
         
         # Send ctrl+b
         await pilot.press("ctrl+b")
-        assert app.sidebar_visible is False
+        await pilot.pause()
+        assert app.sidebar_visible is True
         
         # Send ctrl+b again
         await pilot.press("ctrl+b")
-        assert app.sidebar_visible is True
+        await pilot.pause()
+        assert app.sidebar_visible is False
 
 
 @pytest.mark.asyncio
@@ -45,39 +47,39 @@ async def test_tui_view_switching():
         # Unfocus input before pressing hotkeys
         app.set_focus(None)
 
-        # Press 's' to go to Sync
+        # Press 'ctrl+2' to go to Sync
         app.set_focus(None)
-        await pilot.press("s")
+        await pilot.press("ctrl+2")
         assert switcher.current == "sync"
 
-        # Press 'd' to go to Doctor
+        # Press 'ctrl+3' to go to Doctor
         app.set_focus(None)
-        await pilot.press("d")
+        await pilot.press("ctrl+3")
         assert switcher.current == "doctor"
 
-        # Press 'g' to go to Graph
+        # Press 'ctrl+4' to go to Graph
         app.set_focus(None)
-        await pilot.press("g")
+        await pilot.press("ctrl+4")
         assert switcher.current == "graph"
 
-        # Press 'f' to go to Search
+        # Press 'ctrl+5' to go to Search
         app.set_focus(None)
-        await pilot.press("f")
+        await pilot.press("ctrl+5")
         assert switcher.current == "search"
 
-        # Press 'm' to go to Monitor
+        # Press 'ctrl+6' to go to Monitor
         app.set_focus(None)
-        await pilot.press("m")
+        await pilot.press("ctrl+6")
         assert switcher.current == "monitor"
 
-        # Press 'e' to go to Settings
+        # Press 'ctrl+7' to go to Settings
         app.set_focus(None)
-        await pilot.press("e")
+        await pilot.press("ctrl+7")
         assert switcher.current == "settings"
 
-        # Press 'c' to return to Chat
+        # Press 'ctrl+1' to return to Chat
         app.set_focus(None)
-        await pilot.press("c")
+        await pilot.press("ctrl+1")
         assert switcher.current == "chat"
 
 

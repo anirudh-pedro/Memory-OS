@@ -140,6 +140,13 @@ def _export_to_environ(config: dict):
         os.environ.setdefault("QDRANT_URL", qdrant["url"])
     os.environ.setdefault("QDRANT_PORT", str(qdrant.get("port", 6333)))
 
+    # SQLite Database
+    workspace_root = os.path.expanduser(config.get("workspace", "~/.memory-os"))
+    active_profile = config.get("active_profile", "default")
+    db_path = os.path.abspath(os.path.join(workspace_root, "workspaces", active_profile, "workspace.db"))
+    if "MEMORY_OS_DB_PATH" not in os.environ:
+        os.environ["MEMORY_OS_DB_PATH"] = db_path
+
 
 def get_config() -> dict:
     """Return the currently loaded config, loading it if necessary."""

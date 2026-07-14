@@ -50,7 +50,8 @@ class ContextBuilder:
             return "Documentation Question"
 
         # 5. Cross Repository Question
-        if "cross repository" in query_lower or "multiple repositories" in query_lower or "across all projects" in query_lower:
+        cross_keywords = ["projects", "repositories", "repos", "cross repository", "multiple repositories", "across all", "all my"]
+        if any(k in query_lower for k in cross_keywords) and not repo_filter:
             return "Cross Repository Question"
 
         # Default

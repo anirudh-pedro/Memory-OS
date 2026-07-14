@@ -106,36 +106,6 @@ class TestSyncAskCLI(unittest.TestCase):
         # Verify that natural language query gets routed to ask and calls run_and_print_ask
         mock_run_and_print_ask.assert_called_once_with("What projects use Python?")
 
-    @patch("storage.db.get_connection")
-    def test_inject_repository_summary_chunk(self, mock_get_connection):
-        """Test repository summary chunk is injected for cross-repository questions."""
-        from core.llm import inject_repository_summary_chunk
-        
-        # Mock database cursor to return some repositories
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = [
-            ("Bug-Tracker", "Bug tracking system", "JavaScript"),
-            ("Memory-OS", "PKOS", "Python")
-        ]
-        mock_conn.cursor.return_value = mock_cursor
-        mock_get_connection.return_value = mock_conn
-        
-        formatted_chunks = [
-            {"text": "Some chunk text", "score": 0.5, "type": "document"}
-        ]
-        
-        # Calling with non-cross-repository query class should do nothing
-        res1 = inject_repository_summary_chunk(list(formatted_chunks), "General Knowledge Question")
-        self.assertEqual(len(res1), 1)
-        
-        # Calling with Cross Repository Question should inject summary chunk
-        res2 = inject_repository_summary_chunk(list(formatted_chunks), "Cross Repository Question")
-        self.assertEqual(len(res2), 2)
-        self.assertEqual(res2[0]["type"], "repository_summary")
-        self.assertIn("Bug-Tracker", res2[0]["text"])
-        self.assertIn("Memory-OS", res2[0]["text"])
-
 
 if __name__ == "__main__":
     unittest.main()
