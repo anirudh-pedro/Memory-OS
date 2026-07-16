@@ -258,11 +258,12 @@ class ChatPanel(Container):
         repos = []
         query_class = "Unknown"
 
+        sentinel = object()
         while True:
             try:
-                item = await loop.run_in_executor(executor, next, gen)
-            except StopIteration:
-                break
+                item = await loop.run_in_executor(executor, next, gen, sentinel)
+                if item is sentinel:
+                    break
             except Exception as e:
                 response_widget.update(f"[bold red]● Error[/bold red]\n\n{e}")
                 break

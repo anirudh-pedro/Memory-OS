@@ -146,6 +146,18 @@ class ComposeManager:
         print("stderr:")
         print(result.stderr or "")
         print("")
+
+        # Check for docker registry network timeout
+        err_msg = (result.stderr or "") + (result.stdout or "")
+        if any(x in err_msg.lower() for x in ["context deadline exceeded", "registry-1.docker.io", "auth.docker.io", "timeout exceeded"]):
+            recommendation += (
+                "\n\n[💡 Network Tip] Docker is timing out while trying to pull images from Docker Hub.\n"
+                "  1. Verify your internet connection / VPN / proxy settings.\n"
+                "  2. If you are behind a restrictive ISP/firewall, configure a registry mirror in Docker Desktop settings:\n"
+                "     Docker Desktop ➔ Settings ➔ Docker Engine ➔ Add: \"registry-mirrors\": [\"https://mirror.gcr.io\"]\n"
+                "  3. Run 'docker logout' to clear any stale credentials, or try manually running: docker pull neo4j:5"
+            )
+
         print("Recommendation:")
         print(recommendation)
 
