@@ -1,8 +1,6 @@
 import os
 import sys
-import time
 import asyncio
-import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -22,7 +20,6 @@ from storage.db import (
     get_repo_count,
     get_email_count,
     get_repository_document_count,
-    get_document_chunk_count,
     get_connection
 )
 from core.vector_store import get_vector_index_stats, run_semantic_search

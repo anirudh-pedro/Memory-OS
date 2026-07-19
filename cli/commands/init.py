@@ -80,26 +80,36 @@ def execute(args):
 
     # ── Step 5: Launch Neo4j + Qdrant ─────────────────────────
     print("\n[Step 5/11] Launching local services (Neo4j, Qdrant)...")
-    neo4j_ok, _ = check_neo4j()
-    qdrant_ok, _ = check_qdrant()
-    if neo4j_ok and qdrant_ok:
-        print("  ✓ Neo4j already running")
-        print("  ✓ Qdrant already running")
+    docker_services_failed = False
+    if not docker_ok:
+        print("  ⚠️ Skipped: Docker is not available.")
+        docker_services_failed = True
+        neo4j_ok = False
+        qdrant_ok = False
     else:
-        if not manager.up(profile="default"):
-            print("❌ Failed to start docker compose services.")
-            sys.exit(1)
-        print("  ✓ Containers launched.")
+        neo4j_ok, _ = check_neo4j()
+        qdrant_ok, _ = check_qdrant()
+        if neo4j_ok and qdrant_ok:
+            print("  ✓ Neo4j already running")
+            print("  ✓ Qdrant already running")
+        else:
+            if not manager.up(profile="default"):
+                print("  ⚠️ Warning: Failed to start docker compose services. Setup will continue using local SQLite storage.")
+                docker_services_failed = True
+            else:
+                print("  ✓ Containers launched.")
 
     # ── Step 6: Wait until healthy ────────────────────────────
     print("\n[Step 6/11] Waiting for services to become healthy...")
-    if neo4j_ok and qdrant_ok:
+    if docker_services_failed:
+        print("  ⚠️ Skipped: Local services are not running.")
+    elif neo4j_ok and qdrant_ok:
         print("  ✓ Services are healthy.")
     else:
         if not wait_for_services(timeout=60):
-            print("❌ Services failed to start or respond to health checks in time.")
-            sys.exit(1)
-        print("  ✓ Services are healthy.")
+            print("  ⚠️ Warning: Services failed to respond to health checks in time. Setup will continue using local SQLite storage.")
+        else:
+            print("  ✓ Services are healthy.")
 
     # ── Step 7: Initialize SQLite ─────────────────────────────
     print("\n[Step 7/11] Initializing SQLite database...")
@@ -156,7 +166,7 @@ def execute(args):
                         print(f"  👉 Please open this URL in your browser to complete authentication:\n     {req.redirect_url}")
                         print("  Waiting up to 30 seconds for completion...")
                         try:
-                            req.wait_for_connection(timeout=30000)
+                            req.wait_for_connection(timeout=30)
                             print(f"  ✓ {name} connected successfully!")
                         except Exception:
                             print(f"  ⚠️ Connection verification timed out. You can connect it later or run 'memory-os doctor'.")

@@ -49,3 +49,12 @@ tfidf_model.json
 
 # Logs directory
 logs/
+
+# Coverage files
+.coverage
+
+# Temp test workspaces
+tests/test_temp_workspace/
+
+# Residual build packages
+cli_memory_os-*/

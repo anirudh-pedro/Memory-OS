@@ -1,6 +1,6 @@
 [project]
 name = "cli-memory-os"
-version = "0.1.12"
+version = "0.1.14"
 description = "CLI-based Personal Knowledge Operating System"
 readme = "README.md"
 requires-python = ">=3.12"
