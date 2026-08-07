@@ -20,14 +20,13 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     
     if abs_path not in _initialized_dbs:
-        # Check if the schema is initialized (e.g. check if document_chunks table exists)
         cursor = conn.cursor()
         try:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks'")
             table_exists = cursor.fetchone()
         except sqlite3.OperationalError:
             table_exists = False
-            
+
         if not table_exists:
             _initialized_dbs.add(abs_path)
             conn.close()

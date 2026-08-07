@@ -34,6 +34,8 @@ def setup_module(module):
 
 def teardown_module(module):
     """Clean up integration test database."""
+    if "MEMORY_OS_DB_PATH" in os.environ:
+        del os.environ["MEMORY_OS_DB_PATH"]
     if os.path.exists(TEST_DB_PATH):
         try:
             os.remove(TEST_DB_PATH)
