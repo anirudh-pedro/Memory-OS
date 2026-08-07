@@ -64,6 +64,7 @@ class ComposeManager:
   neo4j:
     image: neo4j:5
     container_name: memory-os-neo4j-{profile}
+    restart: unless-stopped
     ports:
       - "{neo4j_http_port}:7474"
       - "{neo4j_bolt_port}:7687"
@@ -80,6 +81,7 @@ class ComposeManager:
   qdrant:
     image: qdrant/qdrant:v1.18.0
     container_name: memory-os-qdrant-{profile}
+    restart: unless-stopped
     ports:
       - "{qdrant_port_6333}:6333"
       - "{qdrant_port_6334}:6334"

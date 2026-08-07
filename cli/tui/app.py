@@ -25,7 +25,7 @@ from storage.db import (
 from core.vector_store import get_vector_index_stats, run_semantic_search
 from core.llm import run_hybrid_rag_stream
 from infrastructure.health import (
-    check_docker, check_neo4j, check_qdrant, check_sqlite, check_groq, check_composio, check_embedding_model, check_connector
+    check_python, check_docker, check_neo4j, check_qdrant, check_sqlite, check_groq, check_composio, check_embedding_model, check_connector
 )
 from infrastructure.observability import parse_observability_metrics
 
@@ -433,21 +433,10 @@ class SyncPanel(Container):
                 # Run reindexing
                 run_reindexing(repo_names=None)
 
-                print("\nStep 5: Updating Neo4j Knowledge Graph...")
+                print("\nStep 5: Updating Knowledge Graph...")
                 try:
                     graph = GraphStore()
-                    if graph.check_connectivity():
-                        print("Neo4j database connected. Synchronizing node relations...")
-                        from storage.db import get_connection
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT repo_name, language, url FROM repositories")
-                        for r in cursor.fetchall():
-                            graph.create_repository_node(r[0], r[1], r[2])
-                        conn.close()
-                        print("Neo4j node sync completed.")
-                    else:
-                        print("Neo4j offline. Skipped graph sync (falling back to SQLite).")
+                    graph.extract_and_sync_graph()
                 except Exception as ex:
                     print(f"Graph update encountered error: {ex}")
 

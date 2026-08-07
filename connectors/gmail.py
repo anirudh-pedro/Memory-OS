@@ -143,8 +143,11 @@ class GmailConnector(BaseConnector):
             return False
 
     def sync(self) -> dict:
-        sync_gmail()
-        return {"status": "success"}
+        try:
+            sync_gmail()
+            return {"status": "success"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     def health(self) -> tuple[bool, str]:
         if self.authenticate():

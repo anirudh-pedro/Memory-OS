@@ -55,3 +55,11 @@ CREATE TABLE IF NOT EXISTS graph_relationships (
     FOREIGN KEY(source_id) REFERENCES graph_nodes(id),
     FOREIGN KEY(target_id) REFERENCES graph_nodes(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_repo ON document_chunks(repository_name);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_source ON document_chunks(source_type);
+CREATE INDEX IF NOT EXISTS idx_repo_docs_repo ON repository_documents(repo_name);
+CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_name ON graph_nodes(name);
+CREATE INDEX IF NOT EXISTS idx_graph_rels_source_target ON graph_relationships(source_id, target_id);
+

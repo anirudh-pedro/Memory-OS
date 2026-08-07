@@ -216,6 +216,29 @@ memory-os config set groq.model llama-3.1-8b-instant
 
 ---
 
+## 🚀 CI/CD & Automated PyPI Releases
+
+Memory-OS includes a complete GitHub Actions CI/CD pipeline (`.github/workflows/ci-cd.yml`).
+
+### Automated Workflow Actions:
+1. **Automated Testing**: Runs `pytest` on every `push` and `pull_request` to `main`.
+2. **Automated PyPI Deployment**: Automatically builds wheels and pushes the updated version to PyPI when changes are pushed to `main` or a new version tag (e.g. `v0.1.16`) is released.
+
+### Setup Instructions for PyPI Releases:
+1. **Option A: PyPI Trusted Publisher (Recommended / OIDC)**:
+   - Go to [PyPI Account Settings](https://pypi.org/manage/account/) -> **Publishers**.
+   - Add GitHub Publisher: Owner: `anirudh-pedro` (or your GitHub org/username), Repository: `Memory-OS`, Workflow name: `ci-cd.yml`.
+2. **Option B: GitHub Secret**:
+   - Create a PyPI API Token on [PyPI Tokens](https://pypi.org/manage/account/token/).
+   - In GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions**, add a repository secret named `PYPI_API_TOKEN`.
+
+To release a new version:
+1. Update `version = "0.1.X"` in `pyproject.toml`.
+2. Commit and push to `main` (or push a tag `git tag v0.1.X && git push origin v0.1.X`).
+3. GitHub Actions will run tests, build artifacts, and deploy to PyPI automatically.
+
+---
+
 ## 📜 License
 
 This project is licensed under the **MIT License**.
