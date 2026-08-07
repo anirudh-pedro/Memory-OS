@@ -46,6 +46,7 @@ def run_cli(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "cli.main", *args]
     env = {
         **os.environ,
+        "PYTHONPATH": PROJECT_ROOT,
         "PYTHONIOENCODING": "utf-8",
         "MEMORY_OS_DB_PATH": TEST_DB_PATH,
     }
