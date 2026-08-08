@@ -72,20 +72,8 @@ jobs:
         run: |
           twine check dist/*
 
-      - name: Publish Package to PyPI (OIDC / Token)
-        id: publish
+      - name: Publish Package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: https://upload.pypi.org/legacy/
-          # Uses PyPI Trusted Publishing (OIDC) automatically when configured on PyPI.
-          # Or falls back to PYPI_API_TOKEN secret in GitHub Repository Settings.
           password: ${{ secrets.PYPI_API_TOKEN }}
-        continue-on-error: true
-
-      - name: Fallback PyPI Token Publish
-        if: steps.publish.outcome == 'failure'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          twine upload dist/* --skip-existing
+          skip-existing: true
