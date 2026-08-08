@@ -73,7 +73,12 @@ jobs:
           twine check dist/*
 
       - name: Publish Package to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -n "$TWINE_PASSWORD" ]; then
+            twine upload dist/* --skip-existing
+          else
+            echo "::warning ::PYPI_API_TOKEN secret is not configured in GitHub Repository Settings. Add PYPI_API_TOKEN secret to enable automatic PyPI publishing."
+          fi
