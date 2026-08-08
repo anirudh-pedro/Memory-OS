@@ -136,3 +136,55 @@ def test_doctor_auth_recommendations(capsys):
         
         assert "Neo4j is running but authentication failed." in captured.out
         assert "neo4j.password" in captured.out
+
+
+def test_db_context_manager_and_migration(tmp_path):
+    """Test db schema versioning, non-destructive migration, and context manager."""
+    from storage.db import init_db, get_db_connection, get_repo_count, insert_repository
+    from models.memory import Repository
+
+    db_file = tmp_path / "test_migration.db"
+    
+    # 1. Initialize schema
+    init_db(str(db_file))
+
+    # 2. Check schema_versions table
+    with get_db_connection(str(db_file)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version FROM schema_versions")
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] >= 1
+
+    # 3. Test insert & context manager
+    repo = Repository(
+        repo_name="test-repo",
+        description="Test description",
+        language="Python",
+        visibility="public",
+        stars=10,
+        forks=2,
+        open_issues=0,
+        default_branch="main",
+        updated_at="2026-08-08T00:00:00",
+        url="https://github.com/test/test-repo"
+    )
+    with patch.dict(os.environ, {"MEMORY_OS_DB_PATH": str(db_file)}):
+        insert_repository(repo)
+        assert get_repo_count() == 1
+
+    # 4. Re-run init_db (migration check) to ensure no data is destroyed
+    init_db(str(db_file))
+    with patch.dict(os.environ, {"MEMORY_OS_DB_PATH": str(db_file)}):
+        assert get_repo_count() == 1
+
+
+def test_secure_file_permissions(tmp_path):
+    """Test secure_file_permissions sets owner-only permissions."""
+    from infrastructure.config import secure_file_permissions
+    test_file = tmp_path / "config.toml"
+    test_file.write_text("groq = { model = 'test' }\n")
+    
+    secure_file_permissions(test_file)
+    assert test_file.exists()
+

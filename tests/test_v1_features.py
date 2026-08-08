@@ -30,15 +30,27 @@ from connectors.base import BaseConnector
 class TestConfigurationSubsystem(unittest.TestCase):
     """Test suite verifying nested TOML configuration manager."""
 
-    def setUp(self):
+    def _clean_workspace(self):
+        import logging
+        for h in list(logging.getLogger().handlers):
+            try:
+                h.close()
+                logging.getLogger().removeHandler(h)
+            except Exception:
+                pass
         if os.path.exists(TEST_WORKSPACE):
-            shutil.rmtree(TEST_WORKSPACE)
+            try:
+                shutil.rmtree(TEST_WORKSPACE, ignore_errors=True)
+            except Exception:
+                pass
+
+    def setUp(self):
+        self._clean_workspace()
         os.makedirs(TEST_WORKSPACE, exist_ok=True)
         save_config(DEFAULTS)
 
     def tearDown(self):
-        if os.path.exists(TEST_WORKSPACE):
-            shutil.rmtree(TEST_WORKSPACE)
+        self._clean_workspace()
 
     def test_dotted_get_and_set(self):
         success, _ = set_dotted("workspace", "~/.test-os")

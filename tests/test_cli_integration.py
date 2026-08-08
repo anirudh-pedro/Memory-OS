@@ -152,6 +152,10 @@ class TestVersionCommand:
 class TestStatusCommand:
     """memory-os status must report database stats without crashing."""
 
+    def setup_method(self):
+        from storage.db import init_db
+        init_db(TEST_DB_PATH)
+
     def test_exits_zero(self):
         result = run_cli("status")
         assert result.returncode == 0

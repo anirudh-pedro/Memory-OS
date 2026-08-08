@@ -165,9 +165,19 @@ def get(section: str, key: str, default=None):
     return default
 
 
+def secure_file_permissions(path: Path):
+    """Set strict read/write permissions (owner-only) on configuration and secret files."""
+    try:
+        if os.name == "posix":
+            os.chmod(path, 0o600)
+        elif os.name == "nt":
+            os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
 def save_config(config_dict: dict):
-    """Write configuration to ~/.memory-os/config.toml."""
-    import tomllib  # read-only; we write manually for now
+    """Write configuration to ~/.memory-os/config.toml with restricted owner-only permissions."""
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -181,6 +191,7 @@ def save_config(config_dict: dict):
             lines.append(f'{key} = {_toml_value(value)}')
 
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    secure_file_permissions(config_path)
 
 
 def set_value(section: str, key: str, value):
