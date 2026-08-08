@@ -1,7 +1,7 @@
 services:
   neo4j:
     image: neo4j:5
-    container_name: memory-os-neo4j-default
+    container_name: memory-os-neo4j-test_exp_imp_p
     restart: unless-stopped
     ports:
       - "7474:7474"
@@ -9,7 +9,7 @@ services:
     environment:
       - NEO4J_AUTH=neo4j/memory_neo
     volumes:
-      - "C:/Users/HP/Desktop/machine learning/Memory-os/tests/test_temp_workspace/workspaces/default/neo4j:/data"
+      - "C:/Users/HP/Desktop/machine learning/Memory-os/tests/test_temp_workspace/workspaces/test_exp_imp_p/neo4j:/data"
     healthcheck:
       test: ["CMD", "neo4j", "status"]
       interval: 10s
@@ -18,13 +18,13 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.18.0
-    container_name: memory-os-qdrant-default
+    container_name: memory-os-qdrant-test_exp_imp_p
     restart: unless-stopped
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - "C:/Users/HP/Desktop/machine learning/Memory-os/tests/test_temp_workspace/workspaces/default/qdrant:/qdrant/storage"
+      - "C:/Users/HP/Desktop/machine learning/Memory-os/tests/test_temp_workspace/workspaces/test_exp_imp_p/qdrant:/qdrant/storage"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
       interval: 10s
