@@ -110,16 +110,25 @@ def get_profile_path(name: str | None = None) -> Path:
 
 def get_db_path(profile: str | None = None) -> Path:
     """Return the SQLite database path for a workspace profile."""
+    override = os.getenv("MEMORY_OS_DB_PATH")
+    if override:
+        return Path(override)
     return get_profile_path(profile) / "workspace.db"
 
 
 def get_qdrant_path(profile: str | None = None) -> Path:
     """Return the Qdrant storage path for a workspace profile."""
+    override = os.getenv("MEMORY_OS_QDRANT_PATH")
+    if override:
+        return Path(override)
     return get_profile_path(profile) / "qdrant"
 
 
 def get_neo4j_path(profile: str | None = None) -> Path:
     """Return the Neo4j data path for a workspace profile."""
+    override = os.getenv("MEMORY_OS_NEO4J_PATH")
+    if override:
+        return Path(override)
     return get_profile_path(profile) / "neo4j"
 
 
