@@ -74,29 +74,48 @@ class Sidebar(Static):
 
     async def perform_health_checks(self) -> None:
         loop = asyncio.get_running_loop()
-        executor = ThreadPoolExecutor(max_workers=4)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            try:
+                docker_ok, _ = await loop.run_in_executor(executor, check_docker)
+            except Exception:
+                docker_ok = False
+            self.docker_status = "[green]ONLINE[/]" if docker_ok else "[red]OFFLINE[/]"
 
-        # Runs checkers in executor to prevent blocking Textual thread
-        docker_ok, _ = await loop.run_in_executor(executor, check_docker)
-        self.docker_status = "[green]ONLINE[/]" if docker_ok else "[red]OFFLINE[/]"
+            try:
+                qdrant_ok, _ = await loop.run_in_executor(executor, check_qdrant)
+            except Exception:
+                qdrant_ok = False
+            self.qdrant_status = "[green]ONLINE[/]" if qdrant_ok else "[red]OFFLINE[/]"
 
-        qdrant_ok, _ = await loop.run_in_executor(executor, check_qdrant)
-        self.qdrant_status = "[green]ONLINE[/]" if qdrant_ok else "[red]OFFLINE[/]"
+            try:
+                neo4j_ok, _ = await loop.run_in_executor(executor, check_neo4j)
+            except Exception:
+                neo4j_ok = False
+            self.neo4j_status = "[green]ONLINE[/]" if neo4j_ok else "[red]OFFLINE[/]"
 
-        neo4j_ok, _ = await loop.run_in_executor(executor, check_neo4j)
-        self.neo4j_status = "[green]ONLINE[/]" if neo4j_ok else "[red]OFFLINE[/]"
+            try:
+                groq_ok, _ = await loop.run_in_executor(executor, check_groq)
+            except Exception:
+                groq_ok = False
+            self.groq_status = "[green]READY[/]" if groq_ok else "[red]NO KEY[/]"
 
-        groq_ok, _ = await loop.run_in_executor(executor, check_groq)
-        self.groq_status = "[green]READY[/]" if groq_ok else "[red]NO KEY[/]"
+            try:
+                github_ok, _ = await loop.run_in_executor(executor, check_connector, "github")
+            except Exception:
+                github_ok = False
+            self.github_status = "[green]ACTIVE[/]" if github_ok else "[yellow]INACTIVE[/]"
 
-        github_ok, _ = await loop.run_in_executor(executor, check_connector, "github")
-        self.github_status = "[green]ACTIVE[/]" if github_ok else "[yellow]INACTIVE[/]"
+            try:
+                gmail_ok, _ = await loop.run_in_executor(executor, check_connector, "gmail")
+            except Exception:
+                gmail_ok = False
+            self.gmail_status = "[green]ACTIVE[/]" if gmail_ok else "[yellow]INACTIVE[/]"
 
-        gmail_ok, _ = await loop.run_in_executor(executor, check_connector, "gmail")
-        self.gmail_status = "[green]ACTIVE[/]" if gmail_ok else "[yellow]INACTIVE[/]"
-
-        notion_ok, _ = await loop.run_in_executor(executor, check_connector, "notion")
-        self.notion_status = "[green]ACTIVE[/]" if notion_ok else "[yellow]INACTIVE[/]"
+            try:
+                notion_ok, _ = await loop.run_in_executor(executor, check_connector, "notion")
+            except Exception:
+                notion_ok = False
+            self.notion_status = "[green]ACTIVE[/]" if notion_ok else "[yellow]INACTIVE[/]"
 
     def watch_active_profile_name(self) -> None:
         self.refresh_ui()

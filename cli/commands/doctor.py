@@ -21,7 +21,7 @@ def execute(args):
 
     checks = run_all_checks()
 
-    max_name_len = max(len(name) for name, _, _ in checks)
+    max_name_len = max((len(name) for name, _, _ in checks), default=10)
 
     for name, passed, detail in checks:
         icon = "✓" if passed else "✗"

@@ -3,6 +3,13 @@ from unittest.mock import patch, MagicMock
 from cli.tui.app import MemoryOSTUIApp
 
 
+@pytest.fixture(autouse=True)
+def mock_tui_health():
+    with patch("cli.tui.app.Sidebar.perform_health_checks"):
+        yield
+
+
+
 @pytest.mark.asyncio
 async def test_tui_app_boot_and_default_view():
     """Verify that the TUI boots correctly and defaults to the chat screen."""
