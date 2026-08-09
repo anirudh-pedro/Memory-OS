@@ -370,8 +370,10 @@ def run_all_checks() -> list[tuple[str, bool, str]]:
 
 def _get_version() -> str:
     """Get the Memory-OS package version."""
-    try:
-        from importlib.metadata import version
-        return version("memory-os")
-    except Exception:
-        return "0.1.0"
+    from importlib.metadata import version
+    for pkg_name in ["cli-memory-os", "memory-os"]:
+        try:
+            return version(pkg_name)
+        except Exception:
+            pass
+    return "0.1.17"

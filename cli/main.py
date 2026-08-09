@@ -429,6 +429,18 @@ def route_command(args):
     elif command == "ask":
         from cli.commands.ask import execute
         execute(args)
+    elif command == "backup":
+        from cli.commands.backup import execute
+        execute(args)
+    elif command == "graph":
+        from cli.commands.graph import execute
+        execute(args)
+    elif command == "update":
+        from cli.commands.update import execute
+        execute(args)
+    elif command == "migrate":
+        from cli.commands.migrate import execute
+        execute(args)
     else:
         from cli.parser import build_parser
         build_parser().print_help()

@@ -598,11 +598,11 @@ class SearchPanel(Container):
         report = [f"Found {len(results)} matches for: '{query}'\n"]
         for idx, item in enumerate(results):
             score = item.get("score", 0.0)
-            payload = item.get("payload", {})
-            repo = payload.get("repository_name", "N/A")
-            doc = payload.get("document_name", "N/A")
-            idx_num = payload.get("chunk_index", 0)
-            text = payload.get("chunk_text", "")
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
+            repo = payload.get("repository_name") or item.get("repository_name") or "N/A"
+            doc = payload.get("document_name") or item.get("document_name") or "N/A"
+            idx_num = payload.get("chunk_index") if payload.get("chunk_index") is not None else item.get("chunk_index", 0)
+            text = payload.get("chunk_text") or item.get("chunk_text") or ""
             
             report.append(f"[bold cyan]Match #{idx+1} (Score: {score:.3f})[/bold cyan]")
             report.append(f"Repo: [white]{repo}[/white] | Doc: [white]{doc}[/white] (Chunk {idx_num})")

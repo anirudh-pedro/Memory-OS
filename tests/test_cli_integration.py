@@ -304,7 +304,37 @@ class TestParserRouting:
         assert args.key == "groq.model"
         assert args.value == "llama-3.3-70b-versatile"
 
+    def test_parse_workspace_info(self):
+        from cli.parser import build_parser
+        args = build_parser().parse_args(["workspace", "info"])
+        assert args.command == "workspace"
+        assert args.workspace_action == "info"
+
     def test_parse_no_command(self):
         from cli.parser import build_parser
         args = build_parser().parse_args([])
         assert args.command is None
+
+
+class TestPhase2SubcommandsExecution:
+    """Verify execution routing of Phase 2 subcommands."""
+
+    def test_workspace_info_command(self):
+        result = run_cli("workspace", "info")
+        assert result.returncode == 0
+        assert "Workspace Info" in result.stdout
+
+    def test_graph_command(self):
+        result = run_cli("graph", "test-repo")
+        assert result.returncode == 0
+        assert "GRAPH RELATIONSHIPS FOR REPOSITORY: test-repo" in result.stdout
+
+    def test_backup_command(self):
+        result = run_cli("backup")
+        assert result.returncode == 0
+        assert "Backup created successfully" in result.stdout
+
+    def test_migrate_command(self):
+        result = run_cli("migrate")
+        assert result.returncode == 0
+        assert "Database schema and migrations up to date" in result.stdout

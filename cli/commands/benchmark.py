@@ -124,21 +124,24 @@ def execute(args):
     groq_ok, _ = check_groq_api()
     if groq_ok:
         try:
-            from core.llm import run_hybrid_rag
+            from core.llm import run_hybrid_rag, query_llm_with_retry
+            # Measure actual direct LLM latency
+            llm_start = time.perf_counter()
+            query_llm_with_retry([{"role": "user", "content": "Respond with OK"}])
+            llm_duration = time.perf_counter() - llm_start
+            latencies["LLM Time"] = f"{llm_duration*1000:.1f} ms"
+
+            # Measure full RAG pipeline duration
             start = time.perf_counter()
             res = run_hybrid_rag("List repositories using Python")
             duration = time.perf_counter() - start
             latencies["Average RAG Pipeline"] = f"{duration:.2f} s"
-            
-            # Estimate LLM time
-            # Assuming LLM call took most of RAG duration (minus search overhead)
-            latencies["LLM Time"] = f"{duration * 0.85:.2f} s"
         except Exception as e:
             latencies["Average RAG Pipeline"] = f"Error: {e}"
-            latencies["LLM Time"] = "Error"
+            latencies["LLM Time"] = f"Error: {e}"
     else:
         latencies["Average RAG Pipeline"] = "Offline (Groq key missing)"
-        latencies["LLM Time"] = "Offline"
+        latencies["LLM Time"] = "Offline (Groq key missing)"
 
     # Display results
     print("──────────────────────────────────────────────────")

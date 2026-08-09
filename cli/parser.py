@@ -157,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     ws_switch = workspace_sub.add_parser("switch", help="Switch active workspace profile")
     ws_switch.add_argument("name", type=str, help="Profile name to switch to")
     workspace_sub.add_parser("list", help="List all workspace profiles")
+    workspace_sub.add_parser("info", help="Show active workspace profile information")
     ws_delete = workspace_sub.add_parser("delete", help="Delete a workspace profile")
     ws_delete.add_argument("name", type=str, help="Profile name to delete")
 
