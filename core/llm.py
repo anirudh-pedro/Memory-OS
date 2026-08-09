@@ -1,11 +1,13 @@
 import os
 import time
 import logging
+import threading
 from groq import Groq
 from storage.graph import GraphStore
 
 logger = logging.getLogger("llm")
 
+_key_lock = threading.Lock()
 _current_key_idx = 0
 
 def get_groq_client_and_key():
@@ -27,12 +29,14 @@ def get_groq_client_and_key():
     if not keys:
         raise ValueError("No Groq API keys found. Please set GROQ_API_KEY_1, GROQ_API_KEY_2, or GROQ_API_KEY.")
         
-    selected_key = keys[_current_key_idx % len(keys)]
+    with _key_lock:
+        selected_key = keys[_current_key_idx % len(keys)]
     return Groq(api_key=selected_key), selected_key
 
 def rotate_groq_key():
     global _current_key_idx
-    _current_key_idx += 1
+    with _key_lock:
+        _current_key_idx += 1
     logger.info("Rotated Groq API key.")
 
 def query_llm_with_retry(messages: list, model: str = None, max_retries: int = 3) -> str:

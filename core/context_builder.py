@@ -172,88 +172,37 @@ class ContextBuilder:
         # Check if any documentation exists (either document or repository)
         has_documentation = any(cand["type"] in ["document", "repository"] for cand in candidates.values())
         
-        # Discard emails if the query does NOT explicitly ask about emails AND documentation exists
         is_email_query = (query_class == "Email Question")
         if not is_email_query and has_documentation:
-            # Remove all emails
             candidates = {k: v for k, v in candidates.items() if v["type"] != "email"}
 
-        # 4. Calculate Hybrid Score for each candidate (TASK 4)
+        # 4. Calculate Hybrid Score for each candidate using RankingEngine
+        from core.ranking import RankingEngine
+        is_repo_focused = (repo_filter is not None)
         scored_candidates = []
         for key, cand in candidates.items():
             sim = cand["semantic_similarity"]
             repo_name = cand.get("repo_name") or ""
             file_name = cand.get("file_name") or ""
             
-            # Repository match boost (0.20)
-            repo_match_val = 0.0
-            if repo_filter:
-                if isinstance(repo_filter, list):
-                    if repo_name in repo_filter:
-                        repo_match_val = 1.0
-                elif repo_name.lower() == repo_filter.lower():
-                    repo_match_val = 1.0
+            text_to_search = ""
+            if cand["type"] == "repository":
+                text_to_search = f"{cand.get('repo_name') or ''} {cand.get('description') or ''}"
+            elif cand["type"] == "document":
+                text_to_search = f"{cand.get('file_name') or ''} {cand.get('content') or ''}"
+            elif cand["type"] == "email":
+                text_to_search = f"{cand.get('subject') or ''} {cand.get('snippet') or ''}"
 
-            # README Bonus (0.10)
-            readme_bonus_val = 1.0 if "readme" in file_name.lower() else 0.0
-
-            # Graph relevance boost (0.10)
-            graph_relevance_val = 0.0
-            if graph_results:
-                for rel_desc in graph_results:
-                    if repo_name and repo_name.lower() in rel_desc.lower():
-                        graph_relevance_val = 1.0
-                        break
-                    if file_name and file_name.lower() in rel_desc.lower():
-                        graph_relevance_val = 1.0
-                        break
-
-            # Keyword Match (0.05)
-            keyword_match_val = cand.get("keyword_match_val", 0.0)
-            if keyword_match_val == 0.0:
-                text_to_search = ""
-                if cand["type"] == "repository":
-                    text_to_search = f"{cand.get('repo_name') or ''} {cand.get('description') or ''}"
-                elif cand["type"] == "document":
-                    text_to_search = f"{cand.get('file_name') or ''} {cand.get('content') or ''}"
-                elif cand["type"] == "email":
-                    text_to_search = f"{cand.get('subject') or ''} {cand.get('snippet') or ''}"
-                text_to_search_lower = text_to_search.lower()
-                if any(term in text_to_search_lower for term in query_terms):
-                    keyword_match_val = 1.0
-
-            # Documentation Bonus (0.05)
-            doc_bonus_val = 0.0
-            if cand["type"] == "document":
-                file_lower = file_name.lower()
-                if "readme" in file_lower:
-                    doc_bonus_val = 1.0
-                elif "architecture" in file_lower or "design" in file_lower or "structure" in file_lower:
-                    doc_bonus_val = 1.0
-                elif file_lower.endswith(".md"):
-                    doc_bonus_val = 1.0
-                elif file_name in ["pyproject.toml", "package.json", "requirements.txt"]:
-                    doc_bonus_val = 0.6
-                elif file_lower.endswith((".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp")):
-                    doc_bonus_val = 0.2
-            elif cand["type"] == "repository":
-                doc_bonus_val = 0.5
-
-            # Calculate final score
-            # Semantic Similarity      0.50
-            # Repository Match         0.20
-            # README Bonus             0.10
-            # Graph Relevance          0.10
-            # Keyword Match            0.05
-            # Documentation Bonus      0.05
-            final_score = round(
-                (0.50 * sim) + 
-                (0.20 * repo_match_val) + 
-                (0.10 * readme_bonus_val) + 
-                (0.10 * graph_relevance_val) + 
-                (0.05 * keyword_match_val) + 
-                (0.05 * doc_bonus_val),
-                4
+            final_score = RankingEngine.calculate_score(
+                semantic_sim=sim,
+                repo_name=repo_name,
+                file_name=file_name,
+                candidate_type=cand["type"],
+                repo_filter=repo_filter,
+                graph_results=graph_results,
+                search_text=text_to_search,
+                query_terms=query_terms,
+                is_repo_focused=is_repo_focused
             )
 
             cand["score"] = final_score
@@ -262,7 +211,7 @@ class ContextBuilder:
         # Sort candidates by score descending
         scored_candidates.sort(key=lambda x: (-x["score"], x.get("repo_name") or x.get("subject") or ""))
 
-        # 5. Deduplication and Context Filtering (TASK 5)
+        # 5. Deduplication and Context Filtering
         deduplicated_candidates = []
         for cand in scored_candidates:
             cand_text = ""

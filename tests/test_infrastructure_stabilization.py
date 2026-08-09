@@ -188,3 +188,63 @@ def test_secure_file_permissions(tmp_path):
     secure_file_permissions(test_file)
     assert test_file.exists()
 
+
+def test_ranking_engine():
+    """Test unified RankingEngine score calculation."""
+    from core.ranking import RankingEngine
+    score = RankingEngine.calculate_score(
+        semantic_sim=0.9,
+        repo_name="my-repo",
+        file_name="README.md",
+        candidate_type="document",
+        repo_filter="my-repo",
+        graph_results=["Repository 'my-repo' USES Technology 'Python'"],
+        search_text="Python repository documentation",
+        query_terms=["python"],
+        is_repo_focused=True
+    )
+    assert score > 0.8
+
+
+def test_batch_chunk_insertion(tmp_path):
+    """Test insert_document_chunks_batch performance batching."""
+    from storage.db import init_db, insert_document_chunks_batch, get_document_chunk_count
+    db_file = tmp_path / "test_batch.db"
+    init_db(str(db_file))
+    
+    chunks = [
+        {
+            "repository_name": "repo1",
+            "document_name": "doc1.md",
+            "source_type": "document",
+            "chunk_text": f"Chunk text {i}",
+            "chunk_index": i,
+            "created_at": "2026-08-09T00:00:00"
+        }
+        for i in range(50)
+    ]
+    with patch.dict(os.environ, {"MEMORY_OS_DB_PATH": str(db_file)}):
+        insert_document_chunks_batch(chunks)
+        assert get_document_chunk_count() == 50
+
+
+def test_graph_store_reset():
+    """Test GraphStore reset classmethod."""
+    from storage.graph import GraphStore
+    GraphStore.reset()
+    assert GraphStore._driver is None
+    assert GraphStore._use_fallback is False
+
+
+def test_thread_safe_key_rotation():
+    """Test thread-safe Groq key rotation."""
+    import concurrent.futures
+    from core.llm import rotate_groq_key, get_groq_client_and_key
+    with patch.dict(os.environ, {"GROQ_API_KEY_1": "key1", "GROQ_API_KEY_2": "key2"}):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(rotate_groq_key) for _ in range(10)]
+            concurrent.futures.wait(futures)
+        _, current_key = get_groq_client_and_key()
+        assert current_key in ["key1", "key2"]
+
+

@@ -443,6 +443,35 @@ def insert_document_chunk(repository_name: str, document_name: str, source_type:
         )
 
 
+def insert_document_chunks_batch(chunks: list[dict]):
+    """Insert a list of document chunk dicts in a single batch transaction.
+    
+    Each item in chunks should be a dict with keys:
+        repository_name, document_name, source_type, chunk_text, chunk_index, created_at
+    """
+    if not chunks:
+        return
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO document_chunks (repository_name, document_name, source_type, chunk_text, chunk_index, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    c.get("repository_name"),
+                    c.get("document_name"),
+                    c.get("source_type"),
+                    c.get("chunk_text"),
+                    c.get("chunk_index", 0),
+                    c.get("created_at")
+                )
+                for c in chunks
+            ]
+        )
+
+
 def clear_document_chunks():
     with get_db_connection() as conn:
         cursor = conn.cursor()

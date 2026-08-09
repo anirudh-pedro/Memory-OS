@@ -19,9 +19,23 @@ class GraphStore:
     _driver = None
     _use_fallback = False
 
-    def __init__(self):
+    @classmethod
+    def reset(cls):
+        """Reset Neo4j driver connection state allowing future retry attempts."""
+        if cls._driver:
+            try:
+                cls._driver.close()
+            except Exception:
+                pass
+        cls._driver = None
+        cls._use_fallback = False
+
+    def __init__(self, force_reconnect: bool = False):
         """Initialise driver for Neo4j knowledge graph, falling back to local SQLite if unavailable."""
-        if GraphStore._driver is None and not GraphStore._use_fallback:
+        if force_reconnect:
+            GraphStore.reset()
+
+        if GraphStore._driver is None:
             uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
             user = os.getenv("NEO4J_USER", "neo4j")
             password = os.getenv("NEO4J_PASSWORD", "password")
@@ -30,6 +44,7 @@ class GraphStore:
                 driver = GraphDatabase.driver(uri, auth=(user, password))
                 driver.verify_connectivity()
                 GraphStore._driver = driver
+                GraphStore._use_fallback = False
                 logger.info("Connected to Neo4j database successfully.")
                 print("Neo4j connection successful.")
             except Exception as e:

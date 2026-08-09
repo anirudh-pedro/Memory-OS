@@ -518,31 +518,10 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
     for cand in filtered_candidates:
         sim = cand["semantic_similarity"]
         
-        # 1. repository_match (score = 1.0 if the query matches this candidate's repository name)
+        from core.ranking import RankingEngine
         repo_name = cand.get("repo_name") or ""
-        repo_match_val = 0.0
-        if repo_filter and repo_name.lower() == repo_filter.lower():
-            repo_match_val = 1.0
-            
-        # 2. readme_bonus (score = 1.0 if document name contains "readme")
         file_name = cand.get("file_name") or ""
-        readme_bonus_val = 1.0 if "readme" in file_name.lower() else 0.0
-        
-        # 3. graph_relevance (score = 1.0 if the candidate references any entity found in graph lookup)
-        graph_relevance_val = 0.0
-        if graph_results:
-            for rel_desc in graph_results:
-                if repo_name and repo_name.lower() in rel_desc.lower():
-                    graph_relevance_val = 1.0
-                    break
-                if file_name and file_name.lower() in rel_desc.lower():
-                    graph_relevance_val = 1.0
-                    break
-                if cand["type"] == "email" and cand.get("subject") and cand["subject"].lower() in rel_desc.lower():
-                    graph_relevance_val = 1.0
-                    break
-        
-        # 4. keyword_match (score = 1.0 if any query term is found in content)
+
         text_to_search = ""
         if cand["type"] == "repository":
             text_to_search = f"{cand.get('repo_name') or ''} {cand.get('description') or ''}"
@@ -550,23 +529,18 @@ def hybrid_search(query: str, source_filter: str = None, repo_filter: str = None
             text_to_search = f"{cand.get('file_name') or ''} {cand.get('content') or ''}"
         elif cand["type"] == "email":
             text_to_search = f"{cand.get('subject') or ''} {cand.get('snippet') or ''}"
-            
-        text_to_search_lower = text_to_search.lower()
-        keyword_match_val = 1.0 if any(term in text_to_search_lower for term in query_terms) else 0.0
-        
-        # Calculate final hybrid score incorporating graph relevance (preferred hierarchy)
-        final_score = round(
-            (0.60 * sim) + 
-            (0.15 * repo_match_val) + 
-            (0.10 * readme_bonus_val) + 
-            (0.10 * graph_relevance_val) + 
-            (0.05 * keyword_match_val),
-            4
+
+        final_score = RankingEngine.calculate_score(
+            semantic_sim=sim,
+            repo_name=repo_name,
+            file_name=file_name,
+            candidate_type=cand["type"],
+            repo_filter=repo_filter,
+            graph_results=graph_results,
+            search_text=text_to_search,
+            query_terms=query_terms,
+            is_repo_focused=is_repo_focused
         )
-        
-        # Down-weight emails for repository-focused queries
-        if is_repo_focused and cand["type"] == "email":
-            final_score = round(final_score * 0.1, 4)
             
         cand["score"] = final_score
         results.append(cand)
