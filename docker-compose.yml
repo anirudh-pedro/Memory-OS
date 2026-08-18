@@ -1,3 +1,7 @@
+# Memory-OS Local Development Docker Compose Configuration
+# Note: For runtime workspace profiles, ComposeManager dynamically generates
+# profile-specific compose configurations under ~/.memory-os/docker-compose.yml
+
 services:
   neo4j:
     image: neo4j:5.24-community
