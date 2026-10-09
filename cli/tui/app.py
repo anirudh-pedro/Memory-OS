@@ -187,8 +187,15 @@ class Sidebar(Static):
         self.update(Panel(content, title="Memory-OS", border_style="#1F2937"))
 
 
+from core.chat import orchestrate_chat_stream, ConversationSession
+
+
 class ChatPanel(Container):
-    """Main Chat Interface supporting streaming responses and input field."""
+    """Main Chat Interface supporting streaming responses and conversational AI."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.session = ConversationSession(max_turns=10)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="chat_container"):
@@ -203,8 +210,8 @@ class ChatPanel(Container):
                     "                                  |___/\n"
                     "```\n"
                     "**Grounded Personal Knowledge Operating System**\n\n"
-                    "Ask questions grounded against your connected workspace: repositories, documentation files, and synced emails.\n\n"
-                    "💡 *Tip: Try asking: 'tell me about my projects' or 'what repositories use Python?'*"
+                    "Conversational AI assistant grounded in your workspace: repositories, docs, emails, and code.\n\n"
+                    "💡 *Tip: Chat naturally ('Hi', 'Explain that simply') or ask personal knowledge questions ('What repositories use Python?').*"
                 )
                 yield Static(
                     RichMarkdown(welcome_md),
@@ -212,7 +219,8 @@ class ChatPanel(Container):
                 )
             with Horizontal(id="input_bar"):
                 yield Label("❯", id="prompt_symbol")
-                yield Input(placeholder="Ask a question...", id="chat_input")
+                yield Input(placeholder="Ask a question or say hi... (type '\\' at end for multiline)", id="chat_input")
+                yield Button("Send", id="chat_send_btn")
 
     def on_mount(self) -> None:
         self.query_one("#chat_input").focus()
@@ -223,10 +231,19 @@ class ChatPanel(Container):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         await self.process_message()
 
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "chat_send_btn":
+            await self.process_message()
+
     async def process_message(self) -> None:
         chat_input = self.query_one("#chat_input", Input)
         user_text = chat_input.value.strip()
         if not user_text:
+            return
+
+        # Check for multiline continuation ('\' at end of line)
+        if user_text.endswith("\\"):
+            chat_input.value = user_text[:-1].rstrip() + "\n"
             return
 
         chat_input.value = ""
@@ -260,7 +277,11 @@ class ChatPanel(Container):
         executor = ThreadPoolExecutor(max_workers=1)
 
         def get_generator():
-            return run_hybrid_rag_stream(question)
+            return orchestrate_chat_stream(
+                question,
+                session=self.session,
+                rag_stream_fn=run_hybrid_rag_stream
+            )
 
         try:
             gen = await loop.run_in_executor(executor, get_generator)
@@ -272,7 +293,8 @@ class ChatPanel(Container):
         answer_text = ""
         sources = []
         repos = []
-        query_class = "Unknown"
+        mode = "conversational"
+        query_class = ""
 
         sentinel = object()
         while True:
@@ -284,29 +306,44 @@ class ChatPanel(Container):
                 response_widget.update(f"[bold red]● Error[/bold red]\n\n{e}")
                 break
 
-            if item["type"] == "diagnostics":
-                query_class = item["data"].get("query_class", "Unknown")
-            elif item["type"] == "token":
-                answer_text += item["content"]
-                response_widget.update(f"[bold cyan]● Memory-OS ({query_class})[/bold cyan]\n\n{answer_text}")
+            item_type = item.get("type")
+            if item_type == "diagnostics":
+                diag = item.get("data", {})
+                query_class = diag.get("query_class", "")
+                mode = diag.get("mode", mode)
+            elif item_type == "token":
+                answer_text += item.get("content", "")
+                if mode == "rag" and query_class and query_class != "Unknown":
+                    header = f"[bold cyan]● Memory-OS[/bold cyan] [dim]({query_class})[/dim]"
+                else:
+                    header = "[bold cyan]● Memory-OS[/bold cyan]"
+                response_widget.update(f"{header}\n\n{answer_text}")
                 self.scroll_to_bottom()
-            elif item["type"] == "done":
-                sources = item["sources"]
-                repos = item["repositories"]
-                confidence = item["confidence"]
+            elif item_type == "done":
+                sources = item.get("sources", [])
+                repos = item.get("repositories", [])
+                confidence = item.get("confidence", 0.0)
+                mode = item.get("mode", mode)
+                final_answer = item.get("answer", answer_text)
 
                 # Build final polished response with markdown formatting
-                final_md = answer_text
-                if confidence > 0.0:
+                final_md = final_answer
+                if mode == "rag" and (sources or repos):
                     metadata = []
                     if sources:
                         metadata.append(f"**Sources**: {', '.join(sources)}")
                     if repos:
                         metadata.append(f"**Repositories**: {', '.join(repos)}")
-                    metadata.append(f"**Confidence**: {confidence:.1f}")
+                    if confidence > 0.0:
+                        metadata.append(f"**Confidence**: {confidence:.1f}")
                     final_md += "\n\n---\n" + "\n".join(metadata)
 
-                response_widget.update(RichMarkdown(f"### ● Memory-OS ({query_class})\n\n{final_md}"))
+                if mode == "rag" and query_class and query_class != "Unknown":
+                    title = f"### ● Memory-OS ({query_class})"
+                else:
+                    title = "### ● Memory-OS"
+
+                response_widget.update(RichMarkdown(f"{title}\n\n{final_md}"))
                 self.scroll_to_bottom()
 
         self.enable_input()

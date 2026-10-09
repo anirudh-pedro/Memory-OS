@@ -11,33 +11,39 @@ from storage.db import init_db
 
 
 def run_and_print_ask(query: str):
-    """Run RAG query pipeline and print the structured result blocks."""
-    rag_res = run_hybrid_rag(query)
-    
+    """Run unified chat orchestration pipeline and print the structured result."""
+    from core.chat import orchestrate_chat
+    rag_res = orchestrate_chat(query, rag_fn=run_hybrid_rag)
+    mode = rag_res.get("mode", "rag")
+    sources = rag_res.get("sources", [])
+    repos = rag_res.get("repositories", [])
+    confidence = rag_res.get("confidence", 0.0)
+
     print("========================================")
     print("ANSWER")
     print("========================================")
     print(rag_res["answer"])
-    print("\n========================================")
-    print("SOURCES")
-    print("========================================")
-    if rag_res.get("sources"):
-        for s in rag_res["sources"]:
-            print(f"- {s}")
-    else:
-        print("None")
-    print("\n========================================")
-    print("REPOSITORIES USED")
-    print("========================================")
-    if rag_res.get("repositories"):
-        for r in rag_res["repositories"]:
-            print(f"- {r}")
-    else:
-        print("None")
-    print("\n========================================")
-    confidence = rag_res.get("confidence", 0.0)
-    print(f"Confidence: {confidence:.2f}")
-    print("========================================")
+
+    if mode == "rag" or bool(sources) or bool(repos):
+        print("\n========================================")
+        print("SOURCES")
+        print("========================================")
+        if sources:
+            for s in sources:
+                print(f"- {s}")
+        else:
+            print("None")
+        print("\n========================================")
+        print("REPOSITORIES USED")
+        print("========================================")
+        if repos:
+            for r in repos:
+                print(f"- {r}")
+        else:
+            print("None")
+        print("\n========================================")
+        print(f"Confidence: {confidence:.2f}")
+        print("========================================")
 
 
 def execute(args):
