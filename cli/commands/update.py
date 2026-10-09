@@ -4,6 +4,7 @@ Command: memory-os update
 Checks and pulls updated Docker service images (Neo4j, Qdrant).
 """
 
+import sys
 from infrastructure.compose import ComposeManager
 
 
@@ -16,3 +17,4 @@ def execute(args):
         print("✓ Docker service images updated successfully.")
     else:
         print(f"⚠️ Failed to update images:\n{result.stderr}")
+        sys.exit(1)

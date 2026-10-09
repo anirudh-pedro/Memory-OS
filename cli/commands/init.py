@@ -22,7 +22,7 @@ def get_input(prompt: str, secret: bool = False, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
     full_prompt = f"{prompt}{suffix}: "
     try:
-        if secret:
+        if secret and sys.stdin.isatty():
             val = getpass.getpass(full_prompt)
         else:
             val = input(full_prompt)

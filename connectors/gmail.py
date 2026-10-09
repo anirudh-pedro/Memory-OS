@@ -27,15 +27,17 @@ def sync_gmail():
         query = ""
         try:
             conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT MAX(received_at) FROM emails WHERE received_at IS NOT NULL AND received_at != ''")
-            row = cursor.fetchone()
-            conn.close()
-            if row and row[0]:
-                import re
-                m = re.match(r"(\d{4})[-/](\d{2})[-/](\d{2})", row[0])
-                if m:
-                    query = f"after:{m.group(1)}/{m.group(2)}/{m.group(3)}"
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(received_at) FROM emails WHERE received_at IS NOT NULL AND received_at != ''")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    import re
+                    m = re.match(r"(\d{4})[-/](\d{2})[-/](\d{2})", row[0])
+                    if m:
+                        query = f"after:{m.group(1)}/{m.group(2)}/{m.group(3)}"
+            finally:
+                conn.close()
         except Exception as e:
             import logging
             logging.getLogger("gmail").warning(f"Failed to query last fetched date from SQLite: {e}")
@@ -77,46 +79,46 @@ def sync_gmail():
         print(f"Found {len(emails)} emails")
         
         conn = get_connection()
-        cursor = conn.cursor()
-        
-        synced_count = 0
-        skipped_count = 0
+        try:
+            cursor = conn.cursor()
+            synced_count = 0
+            skipped_count = 0
 
-        for email in emails:
-            message_id = email.get("id") or email.get("messageId") or email.get("threadId") or ""
-            
-            # Check if email is already in SQLite
-            if message_id:
-                cursor.execute("SELECT id FROM emails WHERE message_id = ?", (message_id,))
-                if cursor.fetchone():
-                    skipped_count += 1
-                    continue
-            
-            subject = email.get("subject") or "No Subject"
-            sender = email.get("sender") or email.get("from") or "Unknown Sender"
-            snippet = email.get("messageText") or email.get("snippet") or ""
-            received_at = email.get("messageTimestamp") or ""
-            date_str = received_at[:10] if len(received_at) >= 10 else received_at
+            for email in emails:
+                message_id = email.get("id") or email.get("messageId") or email.get("threadId") or ""
+                
+                # Check if email is already in SQLite
+                if message_id:
+                    cursor.execute("SELECT id FROM emails WHERE message_id = ?", (message_id,))
+                    if cursor.fetchone():
+                        skipped_count += 1
+                        continue
+                
+                subject = email.get("subject") or "No Subject"
+                sender = email.get("sender") or email.get("from") or "Unknown Sender"
+                snippet = email.get("messageText") or email.get("snippet") or ""
+                received_at = email.get("messageTimestamp") or ""
+                date_str = received_at[:10] if len(received_at) >= 10 else received_at
 
-            # Save to SQLite
-            db_email = Email(
-                message_id=message_id,
-                subject=subject,
-                sender=sender,
-                snippet=snippet,
-                received_at=received_at
-            )
-            insert_email(db_email)
-            synced_count += 1
+                # Save to SQLite
+                db_email = Email(
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    snippet=snippet,
+                    received_at=received_at
+                )
+                insert_email(db_email)
+                synced_count += 1
 
-            # Print to terminal
-            print("--------------------------------------------------")
-            print(f"Subject: {subject}")
-            print(f"From: {sender}")
-            print(f"Date: {date_str}")
-            print("--------------------------------------------------")
-        
-        conn.close()
+                # Print to terminal
+                print("--------------------------------------------------")
+                print(f"Subject: {subject}")
+                print(f"From: {sender}")
+                print(f"Date: {date_str}")
+                print("--------------------------------------------------")
+        finally:
+            conn.close()
         print(f"Gmail Sync Complete: {synced_count} emails synced, {skipped_count} emails skipped.")
             
     except Exception as e:

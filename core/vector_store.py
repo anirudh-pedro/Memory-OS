@@ -106,28 +106,36 @@ def run_reindexing(repo_names=None):
     logger.info(f"Generated SQLite chunks in {time.perf_counter() - chunk_start:.2f}s")
     
     # 2. Connect client
-    client = get_qdrant_client()
-    
+    client = None
+    try:
+        client = get_qdrant_client()
+    except Exception as e:
+        logger.warning(f"Could not connect to Qdrant client: {e}")
+
     if repo_names is None:
         # Full rebuild
         chunks = get_all_document_chunks()
     else:
         # Incremental rebuild: clear specific points in Qdrant and query only those chunks
-        for r_name in repo_names:
-            if r_name == "__emails__":
-                client.delete(
-                    collection_name=COLLECTION_NAME,
-                    points_selector=models.Filter(
-                        must=[models.FieldCondition(key="source_type", match=models.MatchValue(value="email"))]
-                    )
-                )
-            else:
-                client.delete(
-                    collection_name=COLLECTION_NAME,
-                    points_selector=models.Filter(
-                        must=[models.FieldCondition(key="repository_name", match=models.MatchValue(value=r_name))]
-                    )
-                )
+        if client is not None:
+            try:
+                for r_name in repo_names:
+                    if r_name == "__emails__":
+                        client.delete(
+                            collection_name=COLLECTION_NAME,
+                            points_selector=models.Filter(
+                                must=[models.FieldCondition(key="source_type", match=models.MatchValue(value="email"))]
+                            )
+                        )
+                    else:
+                        client.delete(
+                            collection_name=COLLECTION_NAME,
+                            points_selector=models.Filter(
+                                must=[models.FieldCondition(key="repository_name", match=models.MatchValue(value=r_name))]
+                            )
+                        )
+            except Exception as e:
+                logger.warning(f"Could not clear points from Qdrant: {e}")
         
         # Load only the updated chunks from SQLite
         conn = get_connection()
@@ -176,15 +184,24 @@ def run_reindexing(repo_names=None):
     logger.info(f"Embedding generation complete for {len(chunks)} chunks in {embed_duration:.2f}s")
     print(f"Embedding Generation Duration: {embed_duration:.2f}s")
     
-    # 4. Recreate collection or insert
-    logger.info("Uploading vectors to Qdrant...")
-    upload_start = time.perf_counter()
-    if repo_names is None:
-        init_qdrant_collection(client, force_recreate=True)
-    upload_chunks_to_qdrant(client, chunks, embeddings)
-    upload_duration = time.perf_counter() - upload_start
-    logger.info(f"Vector upload complete for {len(chunks)} vectors in {upload_duration:.2f}s")
-    print(f"Vector Upload Duration: {upload_duration:.2f}s")
+    # 4. Recreate collection or insert (guarded against Qdrant outage)
+    vectors_uploaded_count = 0
+    if client is not None:
+        try:
+            logger.info("Uploading vectors to Qdrant...")
+            upload_start = time.perf_counter()
+            if repo_names is None:
+                init_qdrant_collection(client, force_recreate=True)
+            upload_chunks_to_qdrant(client, chunks, embeddings)
+            upload_duration = time.perf_counter() - upload_start
+            logger.info(f"Vector upload complete for {len(chunks)} vectors in {upload_duration:.2f}s")
+            print(f"Vector Upload Duration: {upload_duration:.2f}s")
+            vectors_uploaded_count = len(chunks)
+        except Exception as e:
+            logger.warning(f"Qdrant vector upload failed or service unreachable: {e}. Vector search will be offline.")
+            print(f"⚠️ Warning: Could not upload vectors to Qdrant ({e}). Keyword search in SQLite remains available.")
+    else:
+        logger.warning("Qdrant client unavailable. Vector upload skipped.")
     
     total_duration = time.perf_counter() - start_time
     logger.info(f"Reindexing process complete in {total_duration:.2f}s")
@@ -193,8 +210,8 @@ def run_reindexing(repo_names=None):
         "documents": get_repository_document_count(),
         "chunks": len(chunks),
         "collection": COLLECTION_NAME,
-        "dimension": 384,
-        "vectors_uploaded": len(chunks)
+        "dimension": embedder.dimension(),
+        "vectors_uploaded": vectors_uploaded_count
     }
 
 def get_vector_index_stats() -> dict:
@@ -266,8 +283,8 @@ def run_semantic_search(query: str, limit: int = 5, source_filter: str = None, r
         ]
     )
         
-    client = get_qdrant_client()
     try:
+        client = get_qdrant_client()
         # If we need raw scores, query with the exact limit.
         # Otherwise, query a larger limit (e.g. limit * 4) to allow for keyword boost re-ranking.
         qdrant_limit = limit if raw_scores else limit * 4

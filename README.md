@@ -158,6 +158,7 @@ Memory-OS employs a **multi-model storage strategy**:
 | | `memory-os workspace list\|create\|switch\|delete\|info` | Manages multiple isolated workspace profile directories. |
 | | `memory-os export <file.zip>` | Compresses active workspace databases and configuration into a backup file. |
 | | `memory-os import <file.zip>` | Restores a workspace profile from a backup zip archive. |
+| | `memory-os restore <file.zip>`| Restores a workspace profile from a backup or archive (alias for import). |
 | | `memory-os plugins` | Lists all registered integration connector plugins. |
 | | `memory-os version` | Displays installed package and system version information. |
 

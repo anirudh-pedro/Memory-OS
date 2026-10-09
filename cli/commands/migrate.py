@@ -4,6 +4,7 @@ Command: memory-os migrate
 Runs database schema and workspace data migrations.
 """
 
+import sys
 from storage.db import init_db
 
 
@@ -15,3 +16,4 @@ def execute(args):
         print("✓ Database schema and migrations up to date.")
     except Exception as e:
         print(f"❌ Migration failed: {e}")
+        sys.exit(1)

@@ -39,56 +39,70 @@ def rotate_groq_key():
         _current_key_idx += 1
     logger.info("Rotated Groq API key.")
 
+VALID_GROQ_FALLBACK_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+
+
 def query_llm_with_retry(messages: list, model: str = None, max_retries: int = 3) -> str:
     if not model:
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        model = os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b"
 
-    # Map legacy/unsupported model names to supported ones on Groq
-    mapped_model = model
-    if "/" in model:
-        mapped_model = model.split("/")[-1]
-    
-    # Groq does not host gpt-oss-120b. Map it to a supported model.
-    if mapped_model in ["gpt-oss-120b", "openai/gpt-oss-120b", "openai-gpt-oss-120b"]:
-        mapped_model = "llama-3.3-70b-versatile"
+    # Respect user-configured model first, then try valid fallback models
+    models_to_try = [model]
+    for fb in VALID_GROQ_FALLBACK_MODELS:
+        if fb != model and fb not in models_to_try:
+            models_to_try.append(fb)
 
-    # Make sure we don't crash if the mapped model is completely invalid
-    fallback_models = ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "llama-3.1-8b-instant"]
+    last_error = None
 
-    for attempt in range(max_retries):
-        try:
-            client, key = get_groq_client_and_key()
-            response = client.chat.completions.create(
-                model=mapped_model,
-                messages=messages,
-                temperature=0.0
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            err_str = str(e)
-            is_429 = "429" in err_str or "rate limit" in err_str.lower() or "tpm" in err_str.lower()
-            
-            # If rate limited, rotate key and sleep
-            if is_429 and attempt < max_retries - 1:
-                print(f"[Warning] Groq rate limit hit. Rotating key and retrying (Attempt {attempt+1}/{max_retries})...")
-                rotate_groq_key()
-                time.sleep(1.0)
-                continue
-                
-            # If the model is not found, try a fallback model
-            is_model_error = "model" in err_str.lower() or "not found" in err_str.lower()
-            if is_model_error and attempt < len(fallback_models):
-                old_model = mapped_model
-                mapped_model = fallback_models[attempt % len(fallback_models)]
-                print(f"[Warning] Model '{old_model}' failed. Trying fallback model '{mapped_model}'...")
-                time.sleep(0.5)
-                continue
+    for m_idx, current_model in enumerate(models_to_try):
+        for attempt in range(max_retries):
+            try:
+                client, key = get_groq_client_and_key()
+                response = client.chat.completions.create(
+                    model=current_model,
+                    messages=messages,
+                    temperature=0.0
+                )
+                content = response.choices[0].message.content
+                if content is not None:
+                    return content
+                return ""
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                is_429 = "429" in err_str or "rate limit" in err_str.lower() or "tpm" in err_str.lower()
 
-            # Re-raise on last attempt
-            if attempt == max_retries - 1:
-                raise e
-            time.sleep(0.5)
-    return ""
+                # If rate limited, rotate key and retry this model
+                if is_429 and attempt < max_retries - 1:
+                    print(f"[Warning] Groq rate limit hit for '{current_model}'. Rotating key and retrying (Attempt {attempt+1}/{max_retries})...")
+                    rotate_groq_key()
+                    time.sleep(1.0)
+                    continue
+
+                is_model_error = "model" in err_str.lower() or "not found" in err_str.lower() or "404" in err_str
+                if is_model_error:
+                    # Model not found or unavailable; proceed to next fallback model
+                    next_model = models_to_try[m_idx + 1] if m_idx + 1 < len(models_to_try) else None
+                    if next_model:
+                        print(f"[Warning] Model '{current_model}' failed ({e}). Trying fallback model '{next_model}'...")
+                        time.sleep(0.5)
+                    break
+
+                # If not a model error and attempts remain, retry with key rotation
+                if attempt < max_retries - 1:
+                    rotate_groq_key()
+                    time.sleep(0.5)
+                    continue
+                break
+
+    raise RuntimeError(f"All LLM generation attempts failed across models {models_to_try}. Last error: {last_error}")
+
 
 def inject_repository_summary_chunk(formatted_chunks: list, query_class: str) -> list:
     """If the query is a cross-repository query, pre-append a summary chunk listing all repos."""
@@ -252,6 +266,10 @@ def parse_rag_response(answer: str, fallback_sources: list, fallback_repos: list
         confidence = 0.0
         sources = []
         repos = []
+    elif answer.lower().startswith("error communicating with groq:"):
+        confidence = 0.0
+        sources = []
+        repos = []
     else:
         parsed_answer = ""
         parsed_sources = []
@@ -357,45 +375,61 @@ def run_hybrid_rag(question: str) -> dict:
 
 def stream_llm_with_retry(messages: list, model: str = None, max_retries: int = 3):
     if not model:
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        model = os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b"
 
-    mapped_model = model
-    if "/" in model:
-        mapped_model = model.split("/")[-1]
-    if mapped_model in ["gpt-oss-120b", "openai/gpt-oss-120b", "openai-gpt-oss-120b"]:
-        mapped_model = "llama-3.3-70b-versatile"
+    models_to_try = [model]
+    for fb in VALID_GROQ_FALLBACK_MODELS:
+        if fb != model and fb not in models_to_try:
+            models_to_try.append(fb)
 
-    fallback_models = ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "llama-3.1-8b-instant"]
+    last_error = None
 
-    for attempt in range(max_retries):
-        try:
-            client, key = get_groq_client_and_key()
-            response = client.chat.completions.create(
-                model=mapped_model,
-                messages=messages,
-                temperature=0.0,
-                stream=True
-            )
-            for chunk in response:
-                content = chunk.choices[0].delta.content
-                if content:
-                    yield content
-            return
-        except Exception as e:
-            err_str = str(e)
-            is_429 = "429" in err_str or "rate limit" in err_str.lower() or "tpm" in err_str.lower()
-            if is_429 and attempt < max_retries - 1:
-                rotate_groq_key()
-                time.sleep(1.0)
-                continue
-            is_model_error = "model" in err_str.lower() or "not found" in err_str.lower()
-            if is_model_error and attempt < len(fallback_models):
-                mapped_model = fallback_models[attempt % len(fallback_models)]
-                time.sleep(0.5)
-                continue
-            if attempt == max_retries - 1:
-                raise e
-            time.sleep(0.5)
+    for m_idx, current_model in enumerate(models_to_try):
+        for attempt in range(max_retries):
+            tokens_yielded = False
+            try:
+                client, key = get_groq_client_and_key()
+                response = client.chat.completions.create(
+                    model=current_model,
+                    messages=messages,
+                    temperature=0.0,
+                    stream=True
+                )
+                for chunk in response:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        tokens_yielded = True
+                        yield content
+                return
+            except Exception as e:
+                last_error = e
+                # If we already yielded tokens, do not retry or switch models midway
+                if tokens_yielded:
+                    raise e
+
+                err_str = str(e)
+                is_429 = "429" in err_str or "rate limit" in err_str.lower() or "tpm" in err_str.lower()
+                if is_429 and attempt < max_retries - 1:
+                    rotate_groq_key()
+                    time.sleep(1.0)
+                    continue
+
+                is_model_error = "model" in err_str.lower() or "not found" in err_str.lower() or "404" in err_str
+                if is_model_error:
+                    next_model = models_to_try[m_idx + 1] if m_idx + 1 < len(models_to_try) else None
+                    if next_model:
+                        print(f"[Warning] Streaming model '{current_model}' failed ({e}). Trying fallback model '{next_model}'...")
+                        time.sleep(0.5)
+                    break
+
+                if attempt < max_retries - 1:
+                    rotate_groq_key()
+                    time.sleep(0.5)
+                    continue
+                break
+
+    raise RuntimeError(f"All LLM streaming attempts failed across models {models_to_try}. Last error: {last_error}")
+
 
 
 def run_hybrid_rag_stream(question: str):

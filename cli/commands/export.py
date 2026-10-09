@@ -61,8 +61,32 @@ def execute(args):
 
             # B. Configuration File
             if config_path.exists():
-                zipf.write(config_path, arcname="config.toml")
-                print("  ✓ Packed config.toml")
+                include_secrets = getattr(args, "include_secrets", False)
+                if include_secrets:
+                    zipf.write(config_path, arcname="config.toml")
+                    print("  ⚠️ Packed config.toml (including plaintext credentials)")
+                else:
+                    import tomllib
+                    from infrastructure.config import _toml_value
+                    with open(config_path, "rb") as f:
+                        cfg = tomllib.load(f)
+                    if "groq" in cfg and "api_key" in cfg["groq"]:
+                        cfg["groq"]["api_key"] = ""
+                    if "composio" in cfg and "api_key" in cfg["composio"]:
+                        cfg["composio"]["api_key"] = ""
+                    if "neo4j" in cfg and "password" in cfg["neo4j"]:
+                        cfg["neo4j"]["password"] = ""
+                    
+                    sanitized_lines = []
+                    for k, v in cfg.items():
+                        if isinstance(v, dict):
+                            sanitized_lines.append(f"\n[{k}]")
+                            for subk, subv in v.items():
+                                sanitized_lines.append(f'{subk} = {_toml_value(subv)}')
+                        else:
+                            sanitized_lines.append(f'{k} = {_toml_value(v)}')
+                    zipf.writestr("config.toml", "\n".join(sanitized_lines) + "\n")
+                    print("  ✓ Packed config.toml (credentials sanitized for security)")
 
             # C. SQLite Database
             if db_path.exists():

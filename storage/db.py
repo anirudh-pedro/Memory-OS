@@ -6,19 +6,27 @@ from contextlib import contextmanager
 
 DB_PATH = "memory.db"
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 _initialized_dbs = set()
 logger = logging.getLogger("storage.db")
 
 
 def _raw_connect(abs_path: str) -> sqlite3.Connection:
-    """Open a raw SQLite connection ensuring the parent directory exists."""
+    """Open a raw SQLite connection ensuring the parent directory exists,
+    with WAL journal mode, 30s timeout, and NORMAL synchronous mode.
+    """
     parent = os.path.dirname(abs_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(abs_path)
+    conn = sqlite3.connect(abs_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
     return conn
 
 
@@ -80,10 +88,14 @@ def _run_migrations(conn: sqlite3.Connection):
         if "message_id" not in email_cols:
             cursor.execute("ALTER TABLE emails ADD COLUMN message_id TEXT")
 
-    if current_ver < 1:
+    # Migration 2: Add performance indexes on emails and repository documents
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_received_at ON emails(received_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_repo_docs_composite ON repository_documents(repo_name, file_name)")
+
+    if current_ver < 2:
         cursor.execute(
             "INSERT OR REPLACE INTO schema_versions (version, applied_at) VALUES (?, ?)",
-            (1, datetime.datetime.now().isoformat())
+            (2, datetime.datetime.now().isoformat())
         )
     conn.commit()
 

@@ -58,3 +58,11 @@ tests/test_temp_workspace/
 
 # Residual build packages
 cli_memory_os-*/
+
+# Test environments and scratch directories
+scratch/
+downloaded_wheel/
+pypi_test_env/
+fresh_pkg_env/
+clean_verification_env/
+clean_env*/

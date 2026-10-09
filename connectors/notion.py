@@ -59,67 +59,67 @@ def sync_notion():
         print(f"Found {len(pages)} Notion pages")
 
         conn = get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
+            synced_count = 0
+            skipped_count = 0
 
-        synced_count = 0
-        skipped_count = 0
-
-        for page in pages:
-            if not isinstance(page, dict):
-                continue
-            
-            page_id = page.get("id")
-            if not page_id:
-                continue
-
-            title = get_page_title(page)
-            last_edited_time = page.get("last_edited_time") or ""
-
-            # Incremental check: check if already in DB with same last_edited_time
-            cursor.execute(
-                "SELECT content, synced_at FROM repository_documents WHERE repo_name = 'Notion' AND file_name = ?",
-                (title,)
-            )
-            row = cursor.fetchone()
-            if row:
-                stored_synced_at = row[1]
-                # If we have stored it and it wasn't edited since our last sync, skip it
-                if stored_synced_at and last_edited_time and stored_synced_at >= last_edited_time:
-                    skipped_count += 1
+            for page in pages:
+                if not isinstance(page, dict):
+                    continue
+                
+                page_id = page.get("id")
+                if not page_id:
                     continue
 
-            # Fetch page content
-            try:
-                print(f"Syncing page: {title}")
-                resp_content = s.execute(
-                    tool_slug="notion_get_page_markdown",
-                    arguments={"page_id": page_id}
-                )
-                if resp_content and not resp_content.error and resp_content.data:
-                    content_data = resp_content.data
-                    if "response_data" in content_data:
-                        content_data = content_data["response_data"]
-                    
-                    markdown = content_data.get("markdown") or ""
-                    if markdown.strip():
-                        # Save to database
-                        doc = RepositoryDocument(
-                            repo_name="Notion",
-                            file_name=title,
-                            content=markdown,
-                            source="notion_get_page_markdown",
-                            synced_at=datetime.now().isoformat()
-                        )
-                        insert_repository_document(doc)
-                        synced_count += 1
-                    else:
-                        print(f"Page '{title}' content was empty.")
-                else:
-                    print(f"Failed to fetch content for page: {title}")
-            except Exception as e:
-                print(f"Error fetching page content for '{title}': {e}")
+                title = get_page_title(page)
+                last_edited_time = page.get("last_edited_time") or ""
 
-        conn.close()
+                # Incremental check: check if already in DB with same last_edited_time
+                cursor.execute(
+                    "SELECT content, synced_at FROM repository_documents WHERE repo_name = 'Notion' AND file_name = ?",
+                    (title,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    stored_synced_at = row[1]
+                    # If we have stored it and it wasn't edited since our last sync, skip it
+                    if stored_synced_at and last_edited_time and stored_synced_at >= last_edited_time:
+                        skipped_count += 1
+                        continue
+
+                # Fetch page content
+                try:
+                    print(f"Syncing page: {title}")
+                    resp_content = s.execute(
+                        tool_slug="notion_get_page_markdown",
+                        arguments={"page_id": page_id}
+                    )
+                    if resp_content and not resp_content.error and resp_content.data:
+                        content_data = resp_content.data
+                        if "response_data" in content_data:
+                            content_data = content_data["response_data"]
+                        
+                        markdown = content_data.get("markdown") or ""
+                        if markdown.strip():
+                            # Save to database
+                            doc = RepositoryDocument(
+                                repo_name="Notion",
+                                file_name=title,
+                                content=markdown,
+                                source="notion_get_page_markdown",
+                                synced_at=datetime.now().isoformat()
+                            )
+                            insert_repository_document(doc)
+                            synced_count += 1
+                        else:
+                            print(f"Page '{title}' content was empty.")
+                    else:
+                        print(f"Failed to fetch content for page: {title}")
+                except Exception as e:
+                    print(f"Error fetching page content for '{title}': {e}")
+        finally:
+            conn.close()
         print(f"Notion Sync Complete: {synced_count} pages synced, {skipped_count} pages skipped.")
 
     except Exception as e:

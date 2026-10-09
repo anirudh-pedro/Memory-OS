@@ -408,7 +408,7 @@ def route_command(args):
     elif command == "export":
         from cli.commands.export import execute
         execute(args)
-    elif command == "import":
+    elif command in ("import", "restore"):
         from cli.commands.import_cmd import execute
         execute(args)
     elif command == "config":

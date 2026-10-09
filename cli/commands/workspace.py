@@ -150,3 +150,4 @@ def execute(args):
 
     else:
         print("Usage: memory-os workspace create|switch|list|delete|info")
+        sys.exit(1)

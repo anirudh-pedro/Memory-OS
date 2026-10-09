@@ -78,6 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
         "file", type=str,
         help="Target archive file path (e.g. backup.zip)",
     )
+    export_parser.add_argument(
+        "--include-secrets", action="store_true", default=False,
+        help="Include sensitive credentials (API keys, passwords) in exported archive",
+    )
 
     # ── import ────────────────────────────────────────────────
     import_parser = subparsers.add_parser(
@@ -87,6 +91,24 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument(
         "file", type=str,
         help="Workspace archive file path to import",
+    )
+    import_parser.add_argument(
+        "-y", "--yes", action="store_true", default=False,
+        help="Skip confirmation prompt",
+    )
+
+    # ── restore (alias for import) ────────────────────────────
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="Restore a previously exported workspace archive (alias for import)",
+    )
+    restore_parser.add_argument(
+        "file", type=str,
+        help="Workspace archive or backup file path to restore",
+    )
+    restore_parser.add_argument(
+        "-y", "--yes", action="store_true", default=False,
+        help="Skip confirmation prompt",
     )
 
 
@@ -173,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_set = config_sub.add_parser("set", help="Set a config value")
     config_set.add_argument("key", type=str, help="Config key (e.g. groq.model)")
     config_set.add_argument("value", type=str, help="New value")
+    config_sub.add_parser("reset", help="Reset all configurations to defaults")
 
     # ── plugins ───────────────────────────────────────────────
     subparsers.add_parser(

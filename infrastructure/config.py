@@ -112,33 +112,43 @@ def _export_to_environ(config: dict):
     """
     # Groq
     groq = config.get("groq", {})
-    if groq.get("api_key"):
-        os.environ.setdefault("GROQ_API_KEY", groq["api_key"])
-    if groq.get("model"):
-        os.environ.setdefault("GROQ_MODEL", groq["model"])
+    if groq.get("api_key") and not os.environ.get("GROQ_API_KEY"):
+        os.environ["GROQ_API_KEY"] = groq["api_key"]
+    if groq.get("model") and not os.environ.get("GROQ_MODEL"):
+        os.environ["GROQ_MODEL"] = groq["model"]
 
     # Composio
     composio = config.get("composio", {})
-    if composio.get("api_key"):
-        os.environ.setdefault("COMPOSIO_API_KEY", composio["api_key"])
+    if composio.get("api_key") and not os.environ.get("COMPOSIO_API_KEY"):
+        os.environ["COMPOSIO_API_KEY"] = composio["api_key"]
+    if composio.get("user_id") and not os.environ.get("COMPOSIO_USER_ID"):
+        os.environ["COMPOSIO_USER_ID"] = composio["user_id"]
+
+    # Embeddings
+    embeddings = config.get("embeddings", {})
+    if embeddings.get("model") and not os.environ.get("EMBEDDING_MODEL"):
+        os.environ["EMBEDDING_MODEL"] = embeddings["model"]
 
     # Neo4j
     neo4j = config.get("neo4j", {})
-    if neo4j.get("uri"):
-        os.environ.setdefault("NEO4J_URI", neo4j["uri"])
-    if neo4j.get("user"):
-        os.environ.setdefault("NEO4J_USER", neo4j["user"])
-    if neo4j.get("password"):
-        os.environ.setdefault("NEO4J_PASSWORD", neo4j["password"])
+    if neo4j.get("uri") and not os.environ.get("NEO4J_URI"):
+        os.environ["NEO4J_URI"] = neo4j["uri"]
+    if neo4j.get("user") and not os.environ.get("NEO4J_USER"):
+        os.environ["NEO4J_USER"] = neo4j["user"]
+    if neo4j.get("password") and not os.environ.get("NEO4J_PASSWORD"):
+        os.environ["NEO4J_PASSWORD"] = neo4j["password"]
     # Port env vars for docker-compose
-    os.environ.setdefault("NEO4J_HTTP_PORT", str(neo4j.get("port_http", 7474)))
-    os.environ.setdefault("NEO4J_BOLT_PORT", str(neo4j.get("port_bolt", 7687)))
+    if not os.environ.get("NEO4J_HTTP_PORT"):
+        os.environ["NEO4J_HTTP_PORT"] = str(neo4j.get("port_http", 7474))
+    if not os.environ.get("NEO4J_BOLT_PORT"):
+        os.environ["NEO4J_BOLT_PORT"] = str(neo4j.get("port_bolt", 7687))
 
     # Qdrant
     qdrant = config.get("qdrant", {})
-    if qdrant.get("url"):
-        os.environ.setdefault("QDRANT_URL", qdrant["url"])
-    os.environ.setdefault("QDRANT_PORT", str(qdrant.get("port", 6333)))
+    if qdrant.get("url") and not os.environ.get("QDRANT_URL"):
+        os.environ["QDRANT_URL"] = qdrant["url"]
+    if not os.environ.get("QDRANT_PORT"):
+        os.environ["QDRANT_PORT"] = str(qdrant.get("port", 6333))
 
     # SQLite Database
     workspace_root = os.path.expanduser(config.get("workspace", "~/.memory-os"))

@@ -57,7 +57,10 @@ def execute(args):
             # 2. Confirmation Prompt
             active_profile = get_active_profile()
             print(f"\n⚠️ WARNING: Importing will completely OVERWRITE data in the active workspace profile '{active_profile}'.")
-            confirm = input(f"Are you sure you want to proceed? (y/N): ").strip().lower()
+            if getattr(args, "yes", False):
+                confirm = "y"
+            else:
+                confirm = input(f"Are you sure you want to proceed? (y/N): ").strip().lower()
             if confirm != "y":
                 print("Import cancelled.")
                 return
@@ -85,10 +88,25 @@ def execute(args):
             # 4. Unpack files
             print("Unpacking files from archive...")
             
+            # Helper to validate relative path against Zip Slip
+            def _is_safe_path(base_dir: Path, rel_str: str) -> Path | None:
+                p = Path(rel_str)
+                if ".." in p.parts or p.is_absolute():
+                    return None
+                resolved_base = base_dir.resolve()
+                target = (base_dir / p).resolve()
+                try:
+                    target.relative_to(resolved_base)
+                    return target
+                except ValueError:
+                    return None
+
             # config.toml
             if "config.toml" in zipf.namelist() and config_path:
                 with open(config_path, "wb") as f:
                     f.write(zipf.read("config.toml"))
+                from infrastructure.config import secure_file_permissions
+                secure_file_permissions(config_path)
                 print("  ✓ Restored config.toml")
 
             # workspace.db
@@ -100,8 +118,11 @@ def execute(args):
             # Qdrant files
             qdrant_restored = 0
             for name in zipf.namelist():
-                if name.startswith("qdrant/"):
-                    target_file = qdrant_path / name[7:]
+                if name.startswith("qdrant/") and not name.endswith("/"):
+                    target_file = _is_safe_path(qdrant_path, name[7:])
+                    if target_file is None:
+                        print(f"  ⚠️ Warning: Skipping suspicious archive entry '{name}' (path traversal detected)")
+                        continue
                     target_file.parent.mkdir(parents=True, exist_ok=True)
                     with open(target_file, "wb") as f:
                         f.write(zipf.read(name))
@@ -112,8 +133,11 @@ def execute(args):
             # Neo4j files
             neo4j_restored = 0
             for name in zipf.namelist():
-                if name.startswith("neo4j/"):
-                    target_file = neo4j_path / name[6:]
+                if name.startswith("neo4j/") and not name.endswith("/"):
+                    target_file = _is_safe_path(neo4j_path, name[6:])
+                    if target_file is None:
+                        print(f"  ⚠️ Warning: Skipping suspicious archive entry '{name}' (path traversal detected)")
+                        continue
                     target_file.parent.mkdir(parents=True, exist_ok=True)
                     with open(target_file, "wb") as f:
                         f.write(zipf.read(name))

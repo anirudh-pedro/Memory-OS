@@ -30,7 +30,7 @@ def execute(args):
     try:
         with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
-            tail_lines = lines[-tail_count:]
+            tail_lines = lines[-tail_count:] if tail_count > 0 else []
             for line in tail_lines:
                 print(line.rstrip())
     except Exception as e:
