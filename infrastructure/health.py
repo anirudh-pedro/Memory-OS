@@ -376,4 +376,4 @@ def _get_version() -> str:
             return version(pkg_name)
         except Exception:
             pass
-    return "0.1.18"
+    return "0.1.19"
